@@ -2,13 +2,13 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB5tgF8y73Yt55xfprlXpjlTn-c_OXTf9k",
-  authDomain: "absensigpsonline.firebaseapp.com",
-  projectId: "absensigpsonline",
-  storageBucket: "absensigpsonline.firebasestorage.app",
-  messagingSenderId: "763402474543",
-  appId: "1:763402474543:web:172b892cedffcff471e2da",
-  measurementId: "G-5ECKXHDXYD"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase

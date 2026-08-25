@@ -42,10 +42,12 @@ const clockOutIcon = L.divIcon({
 export function initMap(containerId: string, office: OfficeLocation): void {
   if (map) return;
 
-  const lat = (!office || isNaN(office.latitude)) ? -6.2115 : office.latitude;
-  const lng = (!office || isNaN(office.longitude)) ? 106.8335 : office.longitude;
-  const radius = (!office || isNaN(office.radius) || office.radius <= 0) ? 200 : office.radius;
-  const name = office?.name || 'Kantor Pusat (Jl. Kuningan Persada No.Kav 4)';
+  const lat = (!office || typeof office.latitude !== 'number' || isNaN(office.latitude)) ? -6.2115 : office.latitude;
+  const lng = (!office || typeof office.longitude !== 'number' || isNaN(office.longitude)) ? 106.8335 : office.longitude;
+  const radius = (!office || typeof office.radius !== 'number' || isNaN(office.radius) || office.radius <= 0) ? 200 : office.radius;
+  const name = office?.name || 'Kantor Pusat';
+
+  console.log('[DEBUG] initMap center:', lat, lng, 'radius:', radius);
 
   map = L.map(containerId, {
     zoomControl: false,
@@ -79,7 +81,11 @@ export function initMap(containerId: string, office: OfficeLocation): void {
 }
 
 export function updateUserPosition(gps: GpsCoordinates): void {
-  if (!map || !gps || isNaN(gps.latitude) || isNaN(gps.longitude)) return;
+  console.log('[DEBUG] updateUserPosition called with gps:', gps);
+  if (!map || !gps || typeof gps.latitude !== 'number' || typeof gps.longitude !== 'number' || isNaN(gps.latitude) || isNaN(gps.longitude)) {
+    console.error('[DEBUG] Invalid GPS data, aborting updateUserPosition');
+    return;
+  }
   const latlng: L.LatLngTuple = [gps.latitude, gps.longitude];
 
   if (userMarker) {
@@ -89,7 +95,17 @@ export function updateUserPosition(gps: GpsCoordinates): void {
       .addTo(map)
       .bindPopup(`<b>Lokasi Anda</b><br>Akurasi: ±${gps.accuracy ? gps.accuracy.toFixed(0) : '0'}m`);
   }
-  map.flyTo(latlng, 17, { animate: true, duration: 1.2 });
+  
+  const currentCenter = map.getCenter();
+  const size = map.getSize();
+  console.log('[DEBUG] Current map center before flyTo:', currentCenter, 'size:', size);
+  
+  if (isNaN(currentCenter.lat) || isNaN(currentCenter.lng) || size.x === 0 || size.y === 0) {
+      console.warn('[DEBUG] Map is hidden or center is NaN! Resetting view to prevent crash.');
+      map.setView(latlng, 17, { animate: false });
+  } else {
+      map.flyTo(latlng, 17, { animate: true, duration: 1.2 });
+  }
 }
 
 export function addAttendanceMarker(
@@ -97,7 +113,7 @@ export function addAttendanceMarker(
   type: 'in' | 'out',
   label: string
 ): void {
-  if (!map || !gps || isNaN(gps.latitude) || isNaN(gps.longitude)) return;
+  if (!map || !gps || typeof gps.latitude !== 'number' || typeof gps.longitude !== 'number' || isNaN(gps.latitude) || isNaN(gps.longitude)) return;
   const icon = type === 'in' ? clockInIcon : clockOutIcon;
   const marker = L.marker([gps.latitude, gps.longitude], { icon })
     .addTo(map)
@@ -112,15 +128,24 @@ export function clearAttendanceMarkers(): void {
 
 export function updateOfficeLocation(office: OfficeLocation): void {
   if (!map || !office) return;
-  const lat = isNaN(office.latitude) ? -6.2115 : office.latitude;
-  const lng = isNaN(office.longitude) ? 106.8335 : office.longitude;
-  const radius = (isNaN(office.radius) || office.radius <= 0) ? 200 : office.radius;
+  const lat = (typeof office.latitude !== 'number' || isNaN(office.latitude)) ? -6.2115 : office.latitude;
+  const lng = (typeof office.longitude !== 'number' || isNaN(office.longitude)) ? 106.8335 : office.longitude;
+  const radius = (typeof office.radius !== 'number' || isNaN(office.radius) || office.radius <= 0) ? 200 : office.radius;
   const latlng: L.LatLngTuple = [lat, lng];
 
+  console.log('[DEBUG] updateOfficeLocation center:', lat, lng);
+  
   officeCircle?.setLatLng(latlng).setRadius(radius);
   officeMarker?.setLatLng(latlng);
   officeMarker?.setPopupContent(`<b>${office.name || 'Kantor Pusat'}</b><br>Radius: ${radius}m`);
-  map.flyTo(latlng, 16, { animate: true, duration: 1.0 });
+  
+  const currentCenter = map.getCenter();
+  const size = map.getSize();
+  if (isNaN(currentCenter.lat) || isNaN(currentCenter.lng) || size.x === 0 || size.y === 0) {
+      map.setView(latlng, 16, { animate: false });
+  } else {
+      map.flyTo(latlng, 16, { animate: true, duration: 1.0 });
+  }
 }
 
 export function resizeMap(): void {

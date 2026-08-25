@@ -1,6 +1,6 @@
 import type { AppConfig, AttendanceRecord, Employee, DashboardStats, GpsCoordinates } from './types';
 import {
-  loadRecords, saveRecords, loadEmployee, saveEmployee,
+  loadRecords, saveRecords, backupToGoogleSheets, loadEmployee, saveEmployee,
   loadConfig, saveConfig,
   getCurrentPosition, reverseGeocode, calculateDistance,
   getISODate, getAttendanceStatus, generateId,
@@ -117,7 +117,7 @@ function startGpsWatch(): void {
       renderDistanceInfo(dist, config.officeLocation.radius);
     },
     (err) => setGpsStatus('error', 'GPS Error: ' + err.message),
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 },
   );
 }
 
@@ -167,6 +167,17 @@ async function handleClockIn(): Promise<void> {
     record.clockIn = { time: now.toISOString(), gps, address, status };
 
     saveRecords(records);
+    backupToGoogleSheets('absen', {
+      id: record.id,
+      employeeName: record.employeeName,
+      date: record.date,
+      clockInTime: record.clockIn?.time,
+      clockInAddress: record.clockIn?.address,
+      clockInStatus: record.clockIn?.status,
+      clockOutTime: record.clockOut?.time,
+      clockOutAddress: record.clockOut?.address,
+      notes: record.notes
+    });
     updateUserPosition(gps);
     addAttendanceMarker(gps, 'in', `Clock In ${formatTime(now)}`);
     renderGpsInfo(gps.latitude, gps.longitude, gps.accuracy, gps.altitude);
@@ -203,6 +214,17 @@ async function handleClockOut(): Promise<void> {
     today.workDuration = Math.round((now.getTime() - new Date(today.clockIn.time).getTime()) / 60000);
 
     saveRecords(records);
+    backupToGoogleSheets('absen', {
+      id: today.id,
+      employeeName: today.employeeName,
+      date: today.date,
+      clockInTime: today.clockIn?.time,
+      clockInAddress: today.clockIn?.address,
+      clockInStatus: today.clockIn?.status,
+      clockOutTime: today.clockOut?.time,
+      clockOutAddress: today.clockOut?.address,
+      notes: today.notes
+    });
     addAttendanceMarker(gps, 'out', `Clock Out ${formatTime(now)}`);
     updateDashboard();
     updateButtonState();

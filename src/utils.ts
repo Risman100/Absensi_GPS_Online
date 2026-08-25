@@ -84,7 +84,7 @@ export function getCurrentPosition(): Promise<GpsCoordinates> {
 
     const getPos = (): Promise<GeolocationPosition> => {
       return new Promise((res, rej) => {
-        navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+        navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
       });
     };
 
@@ -96,17 +96,15 @@ export function getCurrentPosition(): Promise<GpsCoordinates> {
           return;
         }
 
-        // 2. Teknik Jitter Checking
-        // GPS asli di perangkat mobile selalu memiliki sedikit fluktuasi pada koordinat.
-        // Kita ambil posisi kedua setelah delay singkat untuk membandingkan.
+        // 2. Teknik Jitter Checking (Hanya aktif jika akurasi GPS buruk)
         setTimeout(() => {
           getPos().then((pos2) => {
-            // Jika koordinat sama persis (identik) setelah jeda waktu, kemungkinan besar itu Mock Location / Fake GPS
             if (
               pos1.coords.latitude === pos2.coords.latitude &&
-              pos1.coords.longitude === pos2.coords.longitude
+              pos1.coords.longitude === pos2.coords.longitude &&
+              pos1.coords.accuracy > 50 // Hanya curiga jika akurasi buruk tapi koordinat 100% statis
             ) {
-              reject(new Error('Indikasi Fake GPS terdeteksi (Lokasi tidak natural). Harap gunakan GPS asli.'));
+              reject(new Error('Indikasi Fake GPS terdeteksi (Lokasi statis). Harap gunakan GPS asli.'));
               return;
             }
 
@@ -119,7 +117,6 @@ export function getCurrentPosition(): Promise<GpsCoordinates> {
               isMocked: false
             });
           }).catch(() => {
-             // Fallback ke posisi pertama jika yang kedua gagal
              resolve({
                 latitude: pos1.coords.latitude,
                 longitude: pos1.coords.longitude,
@@ -129,7 +126,7 @@ export function getCurrentPosition(): Promise<GpsCoordinates> {
                 isMocked: false
              });
           });
-        }, 1500); // 1.5 detik delay
+        }, 1500);
       })
       .catch((err) => {
         let msg = 'Gagal mendapatkan lokasi GPS.';
@@ -138,10 +135,13 @@ export function getCurrentPosition(): Promise<GpsCoordinates> {
             msg = 'Izin lokasi ditolak. Aktifkan GPS di browser.';
             break;
           case err.POSITION_UNAVAILABLE:
-            msg = 'Lokasi tidak tersedia saat ini.';
+            msg = 'Informasi lokasi tidak tersedia. Cek sinyal GPS Anda.';
             break;
           case err.TIMEOUT:
-            msg = 'Waktu permintaan GPS habis. Coba lagi.';
+            msg = 'Waktu permintaan GPS habis. Coba lagi (Pastikan Anda berada di luar ruangan).';
+            break;
+          default:
+            msg = 'Terjadi kesalahan sistem saat mengambil lokasi GPS.';
             break;
         }
         reject(new Error(msg));
@@ -178,6 +178,22 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string> 
 }
 
 // ─── Storage Helpers ─────────────────────────────────────────────────────────
+export async function backupToGoogleSheets(action: 'absen' | 'cuti', data: any) {
+  const url = import.meta.env.VITE_GOOGLE_SCRIPT_URL;
+  if (!url || url === 'MASUKAN_URL_WEB_APP_DI_SINI') return;
+
+  try {
+    const payload = { action, ...data };
+    // GAS fetch is best without headers to avoid CORS preflight, sending as text/plain implicitly
+    await fetch(url, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error('Backup to Google Sheets failed:', err);
+  }
+}
+
 export function saveRecords(records: AttendanceRecord[]): void {
   localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(records));
 }

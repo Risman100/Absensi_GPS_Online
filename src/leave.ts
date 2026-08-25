@@ -1,5 +1,5 @@
 import type { LeaveRequest, OvertimeRequest, LeaveBalance, LeaveType } from './types';
-import { generateId } from './utils';
+import { generateId, backupToGoogleSheets } from './utils';
 
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 const KEYS = {
@@ -69,6 +69,19 @@ export function submitLeaveRequest(
 
   requests.unshift(newRequest);
   saveLeaveRequests(requests);
+  
+  backupToGoogleSheets('cuti', {
+    id: newRequest.id,
+    employeeName: newRequest.employeeName,
+    department: newRequest.department,
+    type: newRequest.type,
+    startDate: newRequest.startDate,
+    endDate: newRequest.endDate,
+    reason: newRequest.reason,
+    status: newRequest.status,
+    submittedAt: newRequest.submittedAt
+  });
+
   return newRequest;
 }
 
