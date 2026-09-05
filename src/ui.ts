@@ -51,10 +51,22 @@ export function renderEmployee(emp: Employee): void {
   const posEl = document.getElementById('employee-position');
   const deptEl = document.getElementById('employee-dept');
   const idEl = document.getElementById('employee-id');
+  const avatarEl = document.getElementById('sidebar-employee-avatar');
+  
   if (nameEl) nameEl.textContent = emp.name;
   if (posEl) posEl.textContent = emp.position;
   if (deptEl) deptEl.textContent = emp.department;
   if (idEl) idEl.textContent = emp.id;
+  
+  if (avatarEl) {
+    if (emp.avatar) {
+      avatarEl.innerHTML = `<img src="${emp.avatar}" style="width:100%;height:100%;object-fit:cover" />`;
+      avatarEl.style.padding = '0'; // override default padding if any
+    } else {
+      avatarEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+      avatarEl.style.padding = '';
+    }
+  }
 }
 
 // ─── Attendance Button State ───────────────────────────────────────────────────
@@ -256,28 +268,51 @@ export function renderDistanceInfo(distance: number, radius: number): void {
 
 // ─── Settings Form ────────────────────────────────────────────────────────────
 export function populateSettingsForm(config: AppConfig, emp: Employee): void {
-  (document.getElementById('setting-lat') as HTMLInputElement).value =
-    String(config.officeLocation.latitude);
-  (document.getElementById('setting-lng') as HTMLInputElement).value =
-    String(config.officeLocation.longitude);
-  (document.getElementById('setting-radius') as HTMLInputElement).value =
-    String(config.officeLocation.radius);
-  (document.getElementById('setting-office-name') as HTMLInputElement).value =
-    config.officeLocation.name;
-  (document.getElementById('setting-start') as HTMLInputElement).value =
-    config.workStartTime;
-  (document.getElementById('setting-end') as HTMLInputElement).value =
-    config.workEndTime;
-  (document.getElementById('setting-late') as HTMLInputElement).value =
-    String(config.lateThresholdMinutes);
-  (document.getElementById('setting-emp-name') as HTMLInputElement).value = emp.name;
-  (document.getElementById('setting-emp-id') as HTMLInputElement).value = emp.id;
-  (document.getElementById('setting-emp-pos') as HTMLInputElement).value = emp.position;
-  (document.getElementById('setting-emp-dept') as HTMLInputElement).value = emp.department;
+  // HR Settings Global (if HR is logged in)
+  const hrLat = document.getElementById('setting-lat') as HTMLInputElement;
+  if (hrLat) {
+    hrLat.value = String(config.officeLocation.latitude);
+    (document.getElementById('setting-lng') as HTMLInputElement).value = String(config.officeLocation.longitude);
+    (document.getElementById('setting-radius') as HTMLInputElement).value = String(config.officeLocation.radius);
+    (document.getElementById('setting-office-name') as HTMLInputElement).value = config.officeLocation.name;
+    (document.getElementById('setting-start') as HTMLInputElement).value = config.workStartTime;
+    (document.getElementById('setting-end') as HTMLInputElement).value = config.workEndTime;
+    (document.getElementById('setting-late') as HTMLInputElement).value = String(config.lateThresholdMinutes);
+  }
+
+  // Employee Personal Settings
+  const empName = document.getElementById('setting-emp-name') as HTMLInputElement;
+  if (empName) {
+    empName.value = emp.name;
+    (document.getElementById('setting-emp-id') as HTMLInputElement).value = emp.id;
+    (document.getElementById('setting-emp-phone') as HTMLInputElement).value = emp.phone || '';
+    (document.getElementById('setting-emp-address') as HTMLTextAreaElement).value = emp.address || '';
+    
+    // Update avatar preview if exists
+    const avatarPreview = document.getElementById('settings-avatar-preview');
+    if (avatarPreview) {
+      if (emp.avatar) {
+        avatarPreview.innerHTML = `<img src="${emp.avatar}" style="width:100%;height:100%;object-fit:cover" />`;
+      } else {
+        avatarPreview.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--slate-500)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+      }
+    }
+    
+    // Update face preview if exists
+    const facePreview = document.getElementById('settings-face-preview');
+    if (facePreview) {
+      // In the future, this should probably use emp.faceData. For now we leave it as dummy or use avatar if faceData is absent.
+      if (emp.avatar) {
+        facePreview.innerHTML = `<img src="${emp.avatar}" style="width:100%;height:100%;object-fit:cover" />`;
+      } else {
+        facePreview.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--slate-500)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+      }
+    }
+  }
 }
 
 export function getSettingsFormValues(): { config: AppConfig; emp: Employee } {
-  const g = (id: string) => (document.getElementById(id) as HTMLInputElement)?.value?.trim() || '';
+  const g = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement)?.value?.trim() || '';
   const lat = parseFloat(g('setting-lat'));
   const lng = parseFloat(g('setting-lng'));
   const radius = parseInt(g('setting-radius'));
@@ -297,8 +332,10 @@ export function getSettingsFormValues(): { config: AppConfig; emp: Employee } {
   const emp: Employee = {
     id: g('setting-emp-id') || 'EMP001',
     name: g('setting-emp-name') || 'Nama Karyawan',
-    position: g('setting-emp-pos') || 'Staff',
-    department: g('setting-emp-dept') || 'Umum',
+    position: 'Staff', // These are now managed internally or via HR
+    department: 'Umum',
+    phone: g('setting-emp-phone'),
+    address: g('setting-emp-address')
   };
   return { config, emp };
 }

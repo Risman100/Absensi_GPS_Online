@@ -6,6 +6,9 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential
 } from 'firebase/auth';
 import type { User as FirebaseUser } from 'firebase/auth';
 
@@ -30,6 +33,8 @@ export interface Session {
   role: 'admin' | 'hr' | 'employee';
   name: string;
   employeeId?: string;
+  department?: string;
+  position?: string;
   loginTime: string;
   phone?: string;
   address?: string;
@@ -211,4 +216,38 @@ export function listenAuthState(callback: (session: Session | null) => void) {
       callback(null);
     }
   });
+}
+
+export async function updateUserProfile(updates: Partial<Session>): Promise<void> {
+  const session = getCurrentSession();
+  if (!session) throw new Error("Tidak ada sesi aktif");
+  
+  const email = session.email.toLowerCase();
+  if (!MOCK_USER_PROFILES[email]) {
+    MOCK_USER_PROFILES[email] = {
+      role: session.role,
+      name: session.name,
+      department: session.department || 'Umum',
+      position: session.position || 'Staff'
+    };
+  }
+  
+  if (updates.phone !== undefined) MOCK_USER_PROFILES[email].phone = updates.phone;
+  if (updates.address !== undefined) MOCK_USER_PROFILES[email].address = updates.address;
+  if (updates.avatar !== undefined) MOCK_USER_PROFILES[email].avatar = updates.avatar;
+  
+  localStorage.setItem('absensi_users', JSON.stringify(MOCK_USER_PROFILES));
+  
+  // Update current session
+  Object.assign(session, updates);
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+export async function updateUserPassword(oldPass: string, newPass: string): Promise<void> {
+  const user = auth.currentUser;
+  if (!user || !user.email) throw new Error("Pengguna tidak terautentikasi");
+  
+  const credential = EmailAuthProvider.credential(user.email, oldPass);
+  await reauthenticateWithCredential(user, credential);
+  await updatePassword(user, newPass);
 }
