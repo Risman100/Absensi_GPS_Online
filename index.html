@@ -7,6 +7,7 @@
     <meta name="description" content="Aplikasi absensi modern berbasis GPS untuk karyawan dan perusahaan. Clock-in dan clock-out dengan verifikasi lokasi GPS real-time." />
     <meta name="theme-color" content="#0a0d1a" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e8b84b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/><circle cx='12' cy='10' r='3'/></svg>" />
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
   </head>
   <body>
 
@@ -1226,6 +1227,71 @@
     <button id="global-theme-toggle" class="theme-toggle-floating" title="Toggle Light/Dark Theme">
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-moon"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
     </button>
+    <!-- ─── MODALS FOR NEW FEATURES ───────────────────────────────────── -->
+    
+    <!-- Camera Modal (Full Screen) -->
+    <div id="camera-modal" class="modal camera-modal" style="display:none;">
+      <div class="camera-container">
+        <video id="camera-video" autoplay playsinline></video>
+        <div style="position:absolute; bottom:100px; left:0; right:0; text-align:center; color:white; background:rgba(0,0,0,0.6); padding:8px 12px; font-size:13px; font-weight:500; z-index:10;">
+          Tolong buka kacamata atau apapun yang menutupi wajah Anda.
+        </div>
+        <div class="camera-controls">
+          <button id="btn-camera-close" class="btn-round btn-danger">✕</button>
+          <button id="btn-capture" class="btn-round btn-capture">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+          <div style="width: 50px;"></div> <!-- Spacer for center alignment -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div id="preview-modal" class="modal preview-modal" style="display:none;">
+      <div class="modal-content">
+        <h3 style="margin-bottom:12px;text-align:center;">Konfirmasi Kehadiran</h3>
+        <div class="preview-grid">
+          <img id="preview-image" src="" alt="Preview" class="preview-img" />
+          <div id="preview-map-container" class="preview-map"></div>
+        </div>
+        <div id="preview-status-text" class="preview-status-text" style="text-align:center;margin:12px 0;"></div>
+        <div class="modal-actions" style="display:flex;gap:12px;margin-top:16px;">
+          <button id="btn-cancel-absen" class="btn-secondary" style="flex:0.6; background-color: var(--rose-500); color: white; border: none;">Batal</button>
+          <button id="btn-retake" class="btn-secondary" style="flex:1">Foto Ulang</button>
+          <button id="btn-submit-absen" class="btn-primary" style="flex:1">Absen Sekarang</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Onboarding Modal -->
+    <div id="onboarding-modal" class="modal onboarding-modal" style="display:none;">
+      <div class="modal-content">
+        <h2 style="margin-bottom:8px;">Lengkapi Data Diri</h2>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Silakan lengkapi data diri dan ambil foto wajah sebagai data dasar HRD.</p>
+        <form id="onboarding-form">
+          <div class="form-group">
+            <label class="form-label" for="onboard-phone">Nomor Telepon</label>
+            <input type="tel" id="onboard-phone" required class="form-input" placeholder="Contoh: 08123456789">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="onboard-address">Alamat Lengkap</label>
+            <textarea id="onboard-address" required class="form-input" rows="2" placeholder="Masukkan alamat domisili..."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Foto Wajah</label>
+            <div class="onboard-photo-area" style="display:flex;flex-direction:column;gap:12px;align-items:center;">
+              <img id="onboard-photo-preview" style="display:none; width:100%; height:200px; object-fit:cover; border-radius:8px; border: 1px solid rgba(128,128,128,0.2);" />
+              <button type="button" id="btn-onboard-camera" style="width:100%; height:120px; border: 2px dashed rgba(128,128,128,0.4); border-radius: 8px; background: rgba(0,0,0,0.2); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color: var(--text-muted); cursor: pointer; transition: all 0.2s;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                <span style="font-size:13px; font-weight:500;">Ketuk untuk Foto</span>
+              </button>
+            </div>
+          </div>
+          <button type="submit" id="btn-submit-onboard" class="btn-primary" disabled style="width:100%;margin-top:16px;">Simpan Data</button>
+        </form>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

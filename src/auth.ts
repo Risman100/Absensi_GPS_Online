@@ -19,6 +19,9 @@ export interface AuthUser {
   employeeId?: string;
   department: string;
   position: string;
+  phone?: string;
+  address?: string;
+  avatar?: string;
 }
 
 export interface Session {
@@ -28,12 +31,15 @@ export interface Session {
   name: string;
   employeeId?: string;
   loginTime: string;
+  phone?: string;
+  address?: string;
+  avatar?: string;
 }
 
 const SESSION_KEY = 'absensi_session';
 
 // Pemetaan sementara Role berdasarkan Email karena Firebase Auth default tidak menyimpan role
-export const MOCK_USER_PROFILES: Record<string, Omit<AuthUser, 'id' | 'email'>> = {
+let MOCK_USER_PROFILES: Record<string, Omit<AuthUser, 'id' | 'email'>> = {
   'admin@email.com': {
     role: 'admin',
     name: 'Super Administrator',
@@ -63,7 +69,12 @@ export const MOCK_USER_PROFILES: Record<string, Omit<AuthUser, 'id' | 'email'>> 
 };
 
 export function initAuth(): void {
-  // Tidak perlu melakukan apa-apa di sini, inisialisasi Firebase sudah dilakukan di firebase.ts
+  const saved = localStorage.getItem('absensi_users');
+  if (saved) {
+    try {
+      MOCK_USER_PROFILES = JSON.parse(saved);
+    } catch (e) {}
+  }
 }
 
 // Untuk mempertahankan kompatibilitas dengan UI saat ini
@@ -75,8 +86,14 @@ export function getUsers(): AuthUser[] {
   }));
 }
 
-export function saveUsers(_users: AuthUser[]): void {
-  // Mock function, tidak disimpan karena menggunakan hardcoded profile
+export function saveUsers(users: AuthUser[]): void {
+  const newProfiles: Record<string, Omit<AuthUser, 'id' | 'email'>> = {};
+  users.forEach(u => {
+    const { id, email, ...rest } = u;
+    newProfiles[email.toLowerCase()] = rest;
+  });
+  MOCK_USER_PROFILES = newProfiles;
+  localStorage.setItem('absensi_users', JSON.stringify(MOCK_USER_PROFILES));
 }
 
 export async function login(email: string, password: string): Promise<Session | null> {
@@ -152,6 +169,9 @@ export function createSessionForUser(firebaseUser: FirebaseUser): Session {
     name: profile.name,
     employeeId: profile.employeeId,
     loginTime: new Date().toISOString(),
+    phone: profile.phone,
+    address: profile.address,
+    avatar: profile.avatar,
   };
 
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));

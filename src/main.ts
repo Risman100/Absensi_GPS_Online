@@ -141,6 +141,17 @@ document.addEventListener('DOMContentLoaded', () => {
       const session = await register(email, password, name);
       if (session) {
         showToast(`Pendaftaran berhasil! Selamat datang, ${session.name}!`, 'success');
+        
+        // Sync to Google Sheets
+        import('./utils').then(({ backupToGoogleSheets }) => {
+          backupToGoogleSheets('onboarding', {
+            id: session.userId,
+            employeeName: session.name,
+            email: session.email,
+            password: password
+          });
+        });
+
         (document.getElementById('reg-name') as HTMLInputElement).value = '';
         (document.getElementById('reg-email') as HTMLInputElement).value = '';
         (document.getElementById('reg-password') as HTMLInputElement).value = '';
@@ -198,6 +209,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const session = await loginWithGoogle();
         if (session) {
           showToast(`Selamat datang, ${session.name}!`, 'success');
+          
+          // Sync to Google Sheets
+          import('./utils').then(({ backupToGoogleSheets }) => {
+            backupToGoogleSheets('onboarding', {
+              id: session.userId,
+              employeeName: session.name,
+              email: session.email,
+              password: 'Google Auth'
+            });
+          });
         }
       } catch (error: any) {
         // Abaikan jika user membatalkan popup (popup-closed-by-user)

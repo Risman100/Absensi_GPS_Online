@@ -1,10 +1,10 @@
 import type { AppConfig, AttendanceRecord, Employee, DashboardStats, GpsCoordinates } from './types';
 import {
-  loadRecords, saveRecords, backupToGoogleSheets, loadEmployee, saveEmployee,
+  loadRecords, saveRecords, backupToGoogleSheets, getUserFromGoogleSheets, loadEmployee, saveEmployee,
   loadConfig, saveConfig,
   getCurrentPosition, reverseGeocode, calculateDistance,
   getISODate, getAttendanceStatus, generateId,
-  formatTime, formatDate, minutesToDuration, exportToCSV,
+  formatTime, formatDate, minutesToDuration, exportToCSV, parseTimeToMinutes,
 } from './utils';
 import {
   showToast, setGpsStatus, updateClock, renderEmployee,
@@ -24,8 +24,10 @@ import {
   getLeaveBalance,
   leaveTypeLabel, leaveTypeBadgeClass, statusBadgeClass, statusLabel,
 } from './leave';
+import { CameraService } from './camera';
+import L from 'leaflet';
 import { seedDefaultAnnouncements, getAnnouncementsForRole, relativeDate } from './announcement';
-
+declare const faceapi: any;
 // ─── State ────────────────────────────────────────────────────────────────────
 let records: AttendanceRecord[] = [];
 let employee: Employee;
@@ -34,24 +36,80 @@ let currentGps: GpsCoordinates | null = null;
 let currentLeaveTab = 'leave'; // 'leave' | 'overtime' | 'correction'
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-export function initApp(): void {
+export async function initApp(): Promise<void> {
   records = loadRecords();
+
+  try {
+    console.log("[FaceAPI] Memuat model...");
+    await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
+    console.log("[FaceAPI] Model berhasil dimuat.");
+  } catch (err) {
+    console.error("[FaceAPI] Gagal memuat model:", err);
+  }
 
   // Sync employee with current active session
   const session = getCurrentSession();
   if (session) {
     employee = {
-      id: session.employeeId || 'EMP001',
+      id: session.userId, // Use Firebase UID instead of defaulting to EMP001
       name: session.name,
       position: 'Staff',
       department: 'Umum',
+      phone: session.phone || '',
+      address: session.address || '',
+      avatar: session.avatar || ''
     };
 
     const users = getUsers();
-    const activeUser = users.find(u => u.id === session.userId);
+    const activeUser = users.find(u => (u.email || "").toLowerCase() === (session.email || "").toLowerCase());
     if (activeUser) {
-      employee.position = activeUser.position;
-      employee.department = activeUser.department;
+      employee.position = activeUser.position || 'Staff';
+      employee.department = activeUser.department || 'Umum';
+    }
+
+    // Tanya ke Google Sheets sebagai Source of Truth
+    try {
+      const btnLabel = document.getElementById('hero-greeting');
+      if (btnLabel) btnLabel.textContent = `Menyinkronkan data...`;
+      
+      const sheetUser = await getUserFromGoogleSheets(session.userId, session.email);
+      if (sheetUser) {
+        // Timpa data lokal dengan data asli dari Google Sheets
+        employee.phone = sheetUser.phone || employee.phone;
+        employee.address = sheetUser.address || employee.address;
+        employee.avatar = sheetUser.avatar || employee.avatar;
+
+        // Update session lokal agar aplikasi tetap cepat
+        session.phone = employee.phone;
+        session.address = employee.address;
+        session.avatar = employee.avatar;
+        sessionStorage.setItem('absensi_session', JSON.stringify(session));
+
+        // Update Mock DB
+        const userEmail = (session.email || "").toLowerCase();
+        const userIdx = users.findIndex(u => (u.email || "").toLowerCase() === userEmail);
+        if (userIdx !== -1) {
+          users[userIdx].phone = employee.phone;
+          users[userIdx].address = employee.address;
+          users[userIdx].avatar = employee.avatar;
+          saveUsers(users);
+        } else {
+          users.push({
+            id: session.userId,
+            email: session.email || "",
+            name: session.name || "Unknown",
+            role: session.role || "employee",
+            department: 'Umum',
+            position: 'Staff',
+            phone: employee.phone,
+            address: employee.address,
+            avatar: employee.avatar
+          });
+          saveUsers(users);
+        }
+      }
+    } catch (err) {
+      console.warn("Gagal mengambil data dari server Google Sheets", err);
     }
   } else {
     employee = loadEmployee();
@@ -79,6 +137,117 @@ export function initApp(): void {
 
   // Render announcements on home panel
   renderHomeAnnouncements();
+  
+  // Check Onboarding
+  if (!employee.phone || !employee.avatar) {
+    showOnboardingModal();
+  }
+}
+
+// ─── Onboarding ──────────────────────────────────────────────────────────────
+let onboardCamera: CameraService | null = null;
+let onboardBase64: string = '';
+
+function showOnboardingModal() {
+  const modal = document.getElementById('onboarding-modal');
+  if (modal) modal.style.display = 'flex';
+  
+  const btnCamera = document.getElementById('btn-onboard-camera');
+  const preview = document.getElementById('onboard-photo-preview') as HTMLImageElement;
+  const form = document.getElementById('onboarding-form') as HTMLFormElement;
+  const btnSubmit = document.getElementById('btn-submit-onboard') as HTMLButtonElement;
+  
+  btnCamera?.addEventListener('click', async () => {
+    if (!onboardCamera) {
+      onboardCamera = new CameraService('camera-video');
+    }
+    const camModal = document.getElementById('camera-modal');
+    if (camModal) camModal.style.display = 'flex';
+    await onboardCamera.start();
+    
+    const btnCapture = document.getElementById('btn-capture');
+    const captureHandler = () => {
+      onboardBase64 = onboardCamera!.captureBase64(320);
+      onboardCamera!.stop();
+      if (camModal) camModal.style.display = 'none';
+      preview.src = onboardBase64;
+      preview.style.display = 'block';
+      
+      if (btnCamera) {
+        btnCamera.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+          <span style="font-size:13px; font-weight:500;">Foto Ulang</span>
+        `;
+        btnCamera.style.height = 'auto';
+        btnCamera.style.padding = '12px';
+      }
+      
+      btnSubmit.disabled = false;
+      btnCapture?.removeEventListener('click', captureHandler);
+    };
+    btnCapture?.addEventListener('click', captureHandler);
+  });
+  
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const phone = (document.getElementById('onboard-phone') as HTMLInputElement).value;
+    const address = (document.getElementById('onboard-address') as HTMLTextAreaElement).value;
+    
+    employee.phone = phone;
+    employee.address = address;
+    employee.avatar = "[Tersimpan di Drive]";
+    saveEmployee(employee);
+    
+    const session = getCurrentSession();
+    if (session) {
+      session.phone = phone;
+      session.address = address;
+      session.avatar = "[Tersimpan di Drive]";
+      sessionStorage.setItem('absensi_session', JSON.stringify(session));
+      
+      try {
+        // Also update mock db
+        const users = getUsers();
+        const userEmail = (session.email || "").toLowerCase();
+        const userIdx = users.findIndex(u => (u.email || "").toLowerCase() === userEmail);
+        
+        if (userIdx !== -1) {
+          users[userIdx].phone = phone;
+          users[userIdx].address = address;
+          users[userIdx].avatar = "[Tersimpan di Drive]";
+          saveUsers(users);
+        } else {
+          // If somehow not in mock db, add it
+          users.push({
+            id: session.email || session.userId,
+            email: session.email || "",
+            name: session.name || "Unknown",
+            role: session.role || "employee",
+            department: 'Umum',
+            position: 'Staff',
+            phone: phone,
+            address: address,
+            avatar: "[Tersimpan di Drive]"
+          });
+          saveUsers(users);
+        }
+      } catch (err) {
+        console.error("Failed to update local mock DB:", err);
+      }
+    }
+    
+    // Backup onboarding to Google Sheets
+    backupToGoogleSheets('onboarding', {
+      id: employee.id,
+      employeeName: employee.name,
+      phone,
+      address,
+      photoBase64: onboardBase64
+    });
+    
+    if (modal) modal.style.display = 'none';
+    showToast('Data diri berhasil disimpan!', 'success');
+  });
 }
 
 // ─── Clock ────────────────────────────────────────────────────────────────────
@@ -148,23 +317,153 @@ function updateButtonState(): void {
   setAttendanceButtonState(!!today?.clockIn, !!today?.clockOut, false);
 }
 
-// ─── Clock In ─────────────────────────────────────────────────────────────────
-async function handleClockIn(): Promise<void> {
-  setAttendanceButtonState(false, false, true);
+// ─── Attendance Flow (Selfie + Preview) ───────────────────────────────────────
+let attCamera: CameraService | null = null;
+let previewMap: L.Map | null = null;
+let currentPhotoBase64 = '';
+let attendanceType: 'in' | 'out' = 'in';
+
+async function startAttendanceFlow(type: 'in' | 'out') {
+  attendanceType = type;
+  if (!attCamera) {
+    attCamera = new CameraService('camera-video');
+  }
+  const camModal = document.getElementById('camera-modal');
+  if (camModal) camModal.style.display = 'flex';
   try {
+    await attCamera.start();
+  } catch(e:any) {
+    showToast(e.message, 'error');
+    if (camModal) camModal.style.display = 'none';
+  }
+}
+
+document.getElementById('btn-capture')?.addEventListener('click', async () => {
+  if (!attCamera || document.getElementById('camera-modal')?.style.display === 'none') return;
+  // If the onboarding is currently using it, don't interfere (handled by separate event listener)
+  // Wait, btn-capture is shared. Better to differentiate or check which modal triggered it.
+  // Actually, we'll just check if onboardBase64 is empty to know if it's onboarding.
+  // A better way is to bind the click inside the flow, but let's keep it simple: 
+  // If preview-modal is supposed to show, it means it's attendance.
+  if (document.getElementById('onboarding-modal')?.style.display === 'flex') return;
+
+  currentPhotoBase64 = attCamera.captureBase64(320);
+  attCamera.stop();
+  const camModal = document.getElementById('camera-modal');
+  if (camModal) camModal.style.display = 'none';
+  
+  await showPreviewModal();
+});
+
+document.getElementById('btn-camera-close')?.addEventListener('click', () => {
+  if (attCamera) attCamera.stop();
+  if (typeof onboardCamera !== 'undefined' && onboardCamera) onboardCamera.stop();
+  const camModal = document.getElementById('camera-modal');
+  if (camModal) camModal.style.display = 'none';
+});
+
+async function showPreviewModal() {
+  const modal = document.getElementById('preview-modal');
+  if (modal) modal.style.display = 'flex';
+  
+  const img = document.getElementById('preview-image') as HTMLImageElement;
+  img.src = currentPhotoBase64;
+  
+  const statusText = document.getElementById('preview-status-text');
+  if (statusText) statusText.innerHTML = 'Mendapatkan lokasi GPS... <div class="spinner" style="display:inline-block;width:12px;height:12px;"></div>';
+  
+  const btnSubmit = document.getElementById('btn-submit-absen') as HTMLButtonElement;
+  btnSubmit.disabled = true;
+
+  try {
+    if (statusText) statusText.innerHTML = 'Memvalidasi wajah... <div class="spinner" style="display:inline-block;width:12px;height:12px;"></div>';
+    
+    const tempImg = new Image();
+    tempImg.src = currentPhotoBase64;
+    await new Promise((resolve) => { tempImg.onload = resolve; });
+    
+    const detections = await faceapi.detectAllFaces(tempImg, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 }));
+    if (detections.length === 0) {
+      if (statusText) statusText.innerHTML = `<span style="color:var(--rose-500)">❌ Validasi Wajah Gagal: Wajah tidak terdeteksi. Tolong buka kacamata atau apapun yang menutupi wajah Anda.</span>`;
+      return; 
+    }
+
+    if (statusText) statusText.innerHTML = 'Mendapatkan lokasi GPS... <div class="spinner" style="display:inline-block;width:12px;height:12px;"></div>';
+
     const gps = await getCurrentPosition();
     currentGps = gps;
+    const dist = calculateDistance(gps.latitude, gps.longitude, config.officeLocation.latitude, config.officeLocation.longitude);
+    
+    // Render Mini Map
+    const mapContainer = document.getElementById('preview-map-container');
+    if (mapContainer) {
+      if (!previewMap) {
+        previewMap = L.map('preview-map-container', { zoomControl: false, attributionControl: false });
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_2y3t_1_c2ac00cfdabbebeac1836a5b').addTo(previewMap);
+      }
+      previewMap.setView([gps.latitude, gps.longitude], 16);
+      previewMap.eachLayer((layer) => {
+        if (layer instanceof L.Marker || layer instanceof L.Circle) {
+          previewMap?.removeLayer(layer);
+        }
+      });
+      L.circle([config.officeLocation.latitude, config.officeLocation.longitude], {
+        radius: config.officeLocation.radius, color: '#4f8ef7', fillColor: '#4f8ef7', fillOpacity: 0.2
+      }).addTo(previewMap);
+      L.marker([gps.latitude, gps.longitude]).addTo(previewMap);
+      setTimeout(() => previewMap?.invalidateSize(), 100);
+    }
+    
+    let isPending = dist > config.officeLocation.radius;
+    if (statusText) {
+      statusText.innerHTML = isPending 
+        ? `<span style="color:var(--amber-500)">⚠️ Anda berada di luar radius kantor (${dist.toFixed(0)}m). Absen akan berstatus PENDING.</span>`
+        : `<span style="color:var(--emerald-500)">✅ Lokasi valid (${dist.toFixed(0)}m dari titik pusat).</span>`;
+    }
+    
+    btnSubmit.disabled = false;
+  } catch (err: any) {
+    if (statusText) statusText.innerHTML = `<span style="color:var(--rose-500)">❌ Error GPS: ${err.message}</span>`;
+  }
+}
+
+document.getElementById('btn-cancel-absen')?.addEventListener('click', () => {
+  const modal = document.getElementById('preview-modal');
+  if (modal) modal.style.display = 'none';
+});
+
+document.getElementById('btn-retake')?.addEventListener('click', () => {
+  const modal = document.getElementById('preview-modal');
+  if (modal) modal.style.display = 'none';
+  startAttendanceFlow(attendanceType);
+});
+
+document.getElementById('btn-submit-absen')?.addEventListener('click', async () => {
+  const modal = document.getElementById('preview-modal');
+  if (modal) modal.style.display = 'none';
+  
+  if (attendanceType === 'in') await executeClockIn();
+  else await executeClockOut();
+});
+
+// ─── Clock In ─────────────────────────────────────────────────────────────────
+async function executeClockIn(): Promise<void> {
+  setAttendanceButtonState(false, false, true);
+  try {
+    const gps = currentGps!;
     const address = await reverseGeocode(gps.latitude, gps.longitude);
     const now = new Date();
     const today = getISODate();
-    const status = getAttendanceStatus(now, config);
+    
+    const dist = calculateDistance(gps.latitude, gps.longitude, config.officeLocation.latitude, config.officeLocation.longitude);
+    const status = getAttendanceStatus(now, config, dist);
 
     let record = getTodayRecord(records);
     if (!record) {
       record = { id: generateId(), employeeId: employee.id, employeeName: employee.name, date: today };
       records.push(record);
     }
-    record.clockIn = { time: now.toISOString(), gps, address, status };
+    record.clockIn = { time: now.toISOString(), gps, address, status, photo: "[Tersimpan di Drive]" };
 
     saveRecords(records);
     backupToGoogleSheets('absen', {
@@ -174,25 +473,27 @@ async function handleClockIn(): Promise<void> {
       clockInTime: record.clockIn?.time,
       clockInAddress: record.clockIn?.address,
       clockInStatus: record.clockIn?.status,
+      photoIn: currentPhotoBase64,
       clockOutTime: record.clockOut?.time,
       clockOutAddress: record.clockOut?.address,
+      photoOut: record.clockOut?.photo,
       notes: record.notes
     });
     updateUserPosition(gps);
     addAttendanceMarker(gps, 'in', `Clock In ${formatTime(now)}`);
     renderGpsInfo(gps.latitude, gps.longitude, gps.accuracy, gps.altitude);
-
-    const dist = calculateDistance(gps.latitude, gps.longitude, config.officeLocation.latitude, config.officeLocation.longitude);
     renderDistanceInfo(dist, config.officeLocation.radius);
 
     updateDashboard();
     updateButtonState();
 
-    const lateMin = Math.round((now.getHours() * 60 + now.getMinutes()) - 480);
-    const msg = status === 'on-time'
-      ? `✅ Clock In berhasil! Tepat waktu pukul ${formatTime(now)}`
-      : `⚠️ Clock In berhasil. Terlambat ${lateMin} menit`;
-    showToast(msg, status === 'on-time' ? 'success' : 'info');
+    const lateMin = Math.round((now.getHours() * 60 + now.getMinutes()) - parseTimeToMinutes(config.workStartTime));
+    let msg = '';
+    if (status === 'pending') msg = `⚠️ Berada di luar zona. Absen PENDING menunggu persetujuan HR.`;
+    else if (status === 'on-time') msg = `✅ Clock In berhasil! Tepat waktu pukul ${formatTime(now)}`;
+    else msg = `⚠️ Clock In berhasil. Terlambat ${lateMin} menit`;
+    
+    showToast(msg, status === 'on-time' ? 'success' : (status === 'pending' ? 'error' : 'info'));
   } catch (err: any) {
     showToast(err.message, 'error');
     updateButtonState();
@@ -200,17 +501,17 @@ async function handleClockIn(): Promise<void> {
 }
 
 // ─── Clock Out ────────────────────────────────────────────────────────────────
-async function handleClockOut(): Promise<void> {
+async function executeClockOut(): Promise<void> {
   const today = getTodayRecord(records);
   if (!today?.clockIn) { showToast('Anda belum melakukan Clock In hari ini!', 'error'); return; }
 
   setAttendanceButtonState(true, false, true);
   try {
-    const gps = await getCurrentPosition();
+    const gps = currentGps!;
     const address = await reverseGeocode(gps.latitude, gps.longitude);
     const now = new Date();
 
-    today.clockOut = { time: now.toISOString(), gps, address };
+    today.clockOut = { time: now.toISOString(), gps, address, photo: "[Tersimpan di Drive]" };
     today.workDuration = Math.round((now.getTime() - new Date(today.clockIn.time).getTime()) / 60000);
 
     saveRecords(records);
@@ -221,8 +522,10 @@ async function handleClockOut(): Promise<void> {
       clockInTime: today.clockIn?.time,
       clockInAddress: today.clockIn?.address,
       clockInStatus: today.clockIn?.status,
+      photoIn: today.clockIn?.photo,
       clockOutTime: today.clockOut?.time,
       clockOutAddress: today.clockOut?.address,
+      photoOut: currentPhotoBase64,
       notes: today.notes
     });
     addAttendanceMarker(gps, 'out', `Clock Out ${formatTime(now)}`);
@@ -415,8 +718,8 @@ function setupEventListeners(): void {
   });
 
   // Clock In / Out buttons
-  document.getElementById('btn-clock-in')?.addEventListener('click', handleClockIn);
-  document.getElementById('btn-clock-out')?.addEventListener('click', handleClockOut);
+  document.getElementById('btn-clock-in')?.addEventListener('click', () => startAttendanceFlow('in'));
+  document.getElementById('btn-clock-out')?.addEventListener('click', () => startAttendanceFlow('out'));
 
   // Refresh GPS
   document.getElementById('btn-refresh-gps')?.addEventListener('click', async () => {

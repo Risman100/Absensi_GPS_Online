@@ -164,6 +164,19 @@ export function submitOvertimeRequest(
   };
   requests.unshift(newReq);
   saveOvertimeRequests(requests);
+
+  backupToGoogleSheets('lembur', {
+    id: newReq.id,
+    employeeName: newReq.employeeName,
+    department: newReq.department,
+    date: newReq.date,
+    startTime: newReq.startTime,
+    endTime: newReq.endTime,
+    reason: newReq.reason,
+    status: newReq.status,
+    submittedAt: newReq.submittedAt
+  });
+
   return newReq;
 }
 

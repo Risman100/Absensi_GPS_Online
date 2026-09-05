@@ -17,23 +17,27 @@ export interface AttendanceRecord {
     gps: GpsCoordinates;
     address?: string;
     status: AttendanceStatus;
+    photo?: string; // Base64
   };
   clockOut?: {
     time: string;
     gps: GpsCoordinates;
     address?: string;
+    photo?: string; // Base64
   };
   workDuration?: number; // minutes
   notes?: string;
 }
 
-export type AttendanceStatus = 'on-time' | 'late' | 'early' | 'absent';
+export type AttendanceStatus = 'on-time' | 'late' | 'early' | 'absent' | 'pending';
 
 export interface Employee {
   id: string;
   name: string;
   position: string;
   department: string;
+  phone?: string;
+  address?: string;
   avatar?: string;
 }
 

@@ -56,8 +56,8 @@ export function initMap(containerId: string, office: OfficeLocation): void {
 
   const isLight = document.documentElement.classList.contains('light-theme');
   const themeUrl = isLight 
-    ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_2y3t_1_c2ac00cfdabbebeac1836a5b'
+    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2y3t_1_c2ac00cfdabbebeac1836a5b';
 
   currentTileLayer = L.tileLayer(themeUrl, {
     maxZoom: 19,
@@ -179,8 +179,8 @@ export function updateMapTheme(isLight: boolean): void {
     map.removeLayer(currentTileLayer);
   }
   const themeUrl = isLight 
-    ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_2y3t_1_c2ac00cfdabbebeac1836a5b'
+    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2y3t_1_c2ac00cfdabbebeac1836a5b';
     
   currentTileLayer = L.tileLayer(themeUrl, { maxZoom: 19 }).addTo(map);
 }

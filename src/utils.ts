@@ -82,69 +82,40 @@ export function getCurrentPosition(): Promise<GpsCoordinates> {
       return;
     }
 
-    const getPos = (): Promise<GeolocationPosition> => {
+    const getPos = (highAccuracy = true): Promise<GeolocationPosition> => {
       return new Promise((res, rej) => {
-        navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
+        navigator.geolocation.getCurrentPosition(res, (err) => {
+          if (highAccuracy && (err.code === err.TIMEOUT || err.code === err.POSITION_UNAVAILABLE)) {
+            // Fallback to low accuracy
+            navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
+          } else {
+            rej(err);
+          }
+        }, { enableHighAccuracy: highAccuracy, timeout: 15000, maximumAge: 0 });
       });
     };
 
-    getPos()
-      .then((pos1) => {
-        // 1. Cek properti injected dari native app (misal: Capacitor/Cordova)
-        if ((pos1 as any).mocked) {
+    getPos(true)
+      .then((pos) => {
+        if ((pos as any).mocked) {
           reject(new Error('Fake GPS terdeteksi. Harap matikan aplikasi Fake GPS.'));
           return;
         }
-
-        // 2. Teknik Jitter Checking (Hanya aktif jika akurasi GPS buruk)
-        setTimeout(() => {
-          getPos().then((pos2) => {
-            if (
-              pos1.coords.latitude === pos2.coords.latitude &&
-              pos1.coords.longitude === pos2.coords.longitude &&
-              pos1.coords.accuracy > 50 // Hanya curiga jika akurasi buruk tapi koordinat 100% statis
-            ) {
-              reject(new Error('Indikasi Fake GPS terdeteksi (Lokasi statis). Harap gunakan GPS asli.'));
-              return;
-            }
-
-            resolve({
-              latitude: pos2.coords.latitude,
-              longitude: pos2.coords.longitude,
-              accuracy: pos2.coords.accuracy,
-              altitude: pos2.coords.altitude,
-              timestamp: pos2.timestamp,
-              isMocked: false
-            });
-          }).catch(() => {
-             resolve({
-                latitude: pos1.coords.latitude,
-                longitude: pos1.coords.longitude,
-                accuracy: pos1.coords.accuracy,
-                altitude: pos1.coords.altitude,
-                timestamp: pos1.timestamp,
-                isMocked: false
-             });
-          });
-        }, 1500);
+        resolve({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          altitude: pos.coords.altitude,
+          timestamp: pos.timestamp,
+          isMocked: false
+        });
       })
       .catch((err) => {
-        let msg = 'Gagal mendapatkan lokasi GPS.';
-        switch (err.code) {
-          case err.PERMISSION_DENIED:
-            msg = 'Izin lokasi ditolak. Aktifkan GPS di browser.';
-            break;
-          case err.POSITION_UNAVAILABLE:
-            msg = 'Informasi lokasi tidak tersedia. Cek sinyal GPS Anda.';
-            break;
-          case err.TIMEOUT:
-            msg = 'Waktu permintaan GPS habis. Coba lagi (Pastikan Anda berada di luar ruangan).';
-            break;
-          default:
-            msg = 'Terjadi kesalahan sistem saat mengambil lokasi GPS.';
-            break;
-        }
-        reject(new Error(msg));
+        let errMsg = 'Gagal mendapatkan lokasi. Pastikan GPS aktif dan diizinkan.';
+        if (err.code === 1) errMsg = 'Akses GPS ditolak. Tolong izinkan akses lokasi di browser Anda.';
+        else if (err.code === 2) errMsg = 'Posisi GPS tidak tersedia. Coba pindah ke area terbuka.';
+        else if (err.code === 3) errMsg = 'Pencarian lokasi GPS memakan waktu terlalu lama (Timeout).';
+        reject(new Error(errMsg));
       });
   });
 }
@@ -178,19 +149,37 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string> 
 }
 
 // ─── Storage Helpers ─────────────────────────────────────────────────────────
-export async function backupToGoogleSheets(action: 'absen' | 'cuti', data: any) {
+export async function backupToGoogleSheets(action: 'absen' | 'cuti' | 'lembur' | 'onboarding', data: any) {
   const url = import.meta.env.VITE_GOOGLE_SCRIPT_URL;
   if (!url || url === 'MASUKAN_URL_WEB_APP_DI_SINI') return;
 
   try {
-    const payload = { action, ...data };
+    const payload = { action, data };
     // GAS fetch is best without headers to avoid CORS preflight, sending as text/plain implicitly
     await fetch(url, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-  } catch (err) {
-    console.error('Backup to Google Sheets failed:', err);
+  } catch (error) {
+    console.error('Failed to backup to Google Sheets:', error);
+  }
+}
+
+export async function getUserFromGoogleSheets(id: string, email: string): Promise<any> {
+  const url = import.meta.env.VITE_GOOGLE_SCRIPT_URL;
+  if (!url || url === 'MASUKAN_URL_WEB_APP_DI_SINI') return null;
+
+  try {
+    const payload = { action: 'getUser', data: { id, email } };
+    const response = await fetch(url, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    return result.user || null;
+  } catch (error) {
+    console.error('Failed to get user from Google Sheets:', error);
+    return null;
   }
 }
 
@@ -242,8 +231,12 @@ export function loadConfig(): AppConfig {
 // ─── Attendance Status ────────────────────────────────────────────────────────
 export function getAttendanceStatus(
   clockInTime: Date,
-  config: AppConfig
-): 'on-time' | 'late' {
+  config: AppConfig,
+  distanceToOffice: number
+): 'on-time' | 'late' | 'pending' {
+  if (distanceToOffice > config.officeLocation.radius) {
+    return 'pending';
+  }
   const workStart = parseTimeToMinutes(config.workStartTime);
   const clockInMin = clockInTime.getHours() * 60 + clockInTime.getMinutes();
   return clockInMin <= workStart + config.lateThresholdMinutes ? 'on-time' : 'late';
