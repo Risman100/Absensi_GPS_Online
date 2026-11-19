@@ -1,78 +1,9 @@
 import type { AttendanceRecord } from './types';
 import type { Session, AuthUser } from './auth';
-import { getUsers, saveUsers, logout } from './auth';
-import { loadRecords, saveRecords, getISODate, formatTimeShort, minutesToDuration, generateId, exportToCSV } from './utils';
+import { getUsers, logout, adminCreateUser } from './auth';
+import { deleteUser } from './api';
+import { loadRecords, getISODate, formatTimeShort, minutesToDuration, exportToCSV } from './utils';
 import { showToast } from './ui';
-
-// ─── Sample Data Generator ───────────────────────────────────────────────────
-function seedSampleData(): void {
-  const existing = loadRecords();
-  const hasOtherEmployees = existing.some(r => r.employeeId !== 'EMP001');
-  if (hasOtherEmployees) return;
-
-  const empList = [
-    { id: 'EMP001', name: 'Rhein' },
-    { id: 'EMP002', name: 'Budi Santoso' },
-    { id: 'EMP003', name: 'Sari Dewi' },
-  ];
-
-  const newRecords: AttendanceRecord[] = [...existing];
-  const today = new Date();
-
-  for (const emp of empList) {
-    for (let daysAgo = 1; daysAgo <= 30; daysAgo++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - daysAgo);
-      const dow = d.getDay();
-      if (dow === 0 || dow === 6) continue; // skip weekends
-
-      // 8% chance absent
-      if (Math.random() < 0.08) continue;
-
-      // Already has real records for EMP001 on this date
-      const dateStr = getISODate(d);
-      if (emp.id === 'EMP001' && existing.some(r => r.date === dateStr && r.employeeId === 'EMP001')) continue;
-
-      // Clock in: 07:30–09:00
-      const ciHour = 7 + Math.floor(Math.random() * 2);
-      const ciMin = Math.floor(Math.random() * 60);
-      const ciDate = new Date(d);
-      ciDate.setHours(ciHour, ciMin, 0, 0);
-
-      const isLate = ciHour > 8 || (ciHour === 8 && ciMin > 15);
-
-      // Clock out: 7–9 hrs later
-      const workHours = 7 + Math.floor(Math.random() * 3);
-      const coDate = new Date(ciDate);
-      coDate.setHours(coDate.getHours() + workHours, Math.floor(Math.random() * 60));
-
-      const workDuration = Math.round((coDate.getTime() - ciDate.getTime()) / 60000);
-
-      const baseGps = { latitude: -6.2115 + (Math.random() - 0.5) * 0.002, longitude: 106.8335 + (Math.random() - 0.5) * 0.002, accuracy: 8 + Math.random() * 20, altitude: null, timestamp: ciDate.getTime() };
-
-      newRecords.push({
-        id: generateId(),
-        employeeId: emp.id,
-        employeeName: emp.name,
-        date: dateStr,
-        clockIn: {
-          time: ciDate.toISOString(),
-          gps: baseGps,
-          status: isLate ? 'late' : 'on-time',
-          address: 'Jl. Kuningan Persada No.Kav 4, Setiabudi, Jakarta Selatan',
-        },
-        clockOut: {
-          time: coDate.toISOString(),
-          gps: { ...baseGps, timestamp: coDate.getTime() },
-          address: 'Jl. Kuningan Persada No.Kav 4, Setiabudi, Jakarta Selatan',
-        },
-        workDuration,
-      });
-    }
-  }
-
-  saveRecords(newRecords);
-}
 
 function setAdminTab(tabId: string): void {
   document.querySelectorAll('.atab-btn').forEach(b => {
@@ -210,21 +141,32 @@ function renderEmployeeList(users: AuthUser[]): void {
 
   // Bind delete buttons
   document.querySelectorAll('.adm-btn-del-emp').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const uid = btn.getAttribute('data-uid')!;
       const user = users.find(u => u.id === uid);
       if (!user) return;
       if (!confirm(`Hapus karyawan "${user.name}"? Tindakan ini tidak dapat dibatalkan.`)) return;
-      const updated = users.filter(u => u.id !== uid);
-      saveUsers(updated);
-      renderEmployeeList(updated);
-      showToast(`Karyawan ${user.name} dihapus`, 'info');
+      
+      const originalHtml = btn.innerHTML;
+      btn.innerHTML = 'Menghapus...';
+      (btn as HTMLButtonElement).disabled = true;
+
+      try {
+        await deleteUser(uid);
+        const updated = await getUsers();
+        renderEmployeeList(updated);
+        showToast(`Karyawan ${user.name} dihapus`, 'info');
+      } catch (err: any) {
+        showToast('Gagal menghapus karyawan: ' + err.message, 'error');
+        btn.innerHTML = originalHtml;
+        (btn as HTMLButtonElement).disabled = false;
+      }
     });
   });
 }
 
 // ─── Render Add Employee Form ─────────────────────────────────────────────────
-function setupAddEmployee(users: AuthUser[]): void {
+function setupAddEmployee(): void {
   const btn = document.getElementById('adm-btn-add-emp')!;
   const form = document.getElementById('adm-add-emp-form') as HTMLElement;
 
@@ -232,13 +174,13 @@ function setupAddEmployee(users: AuthUser[]): void {
     form.style.display = form.style.display === 'none' ? 'block' : 'none';
   });
 
-  document.getElementById('adm-form-add-emp')?.addEventListener('submit', (e) => {
+  document.getElementById('adm-form-add-emp')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const g = (id: string) => (document.getElementById(id) as HTMLInputElement).value.trim();
     const name = g('adm-new-name');
     const email = g('adm-new-username');
     const password = g('adm-new-password');
-    const role = (document.getElementById('adm-new-role') as HTMLSelectElement).value as any;
+    const role = (document.getElementById('adm-new-role') as HTMLSelectElement)?.value as any || 'employee';
     const position = g('adm-new-position');
     const department = g('adm-new-dept');
     const empId = g('adm-new-empid');
@@ -248,27 +190,37 @@ function setupAddEmployee(users: AuthUser[]): void {
       return;
     }
 
-    if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
+    const currentUsers = await getUsers();
+    if (currentUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) {
       showToast('Email sudah digunakan!', 'error');
       return;
     }
 
-    const newUser: AuthUser = {
-      id: 'emp-' + Date.now(),
-      email,
-      role,
-      name,
-      employeeId: empId,
-      position,
-      department,
-    };
+    const submitBtn = document.querySelector('#adm-form-add-emp button[type="submit"]') as HTMLButtonElement;
+    const originalText = submitBtn.innerHTML;
+    submitBtn.innerHTML = 'Menyimpan...';
+    submitBtn.disabled = true;
 
-    users.push(newUser);
-    saveUsers(users);
-    renderEmployeeList(users);
-    form.style.display = 'none';
-    (document.getElementById('adm-form-add-emp') as HTMLFormElement).reset();
-    showToast(`Karyawan ${name} berhasil ditambahkan!`, 'success');
+    try {
+      await adminCreateUser(email, password, {
+        name,
+        role,
+        position,
+        department,
+        employeeId: empId
+      });
+      
+      const updatedUsers = await getUsers();
+      renderEmployeeList(updatedUsers);
+      form.style.display = 'none';
+      (document.getElementById('adm-form-add-emp') as HTMLFormElement).reset();
+      showToast(`Karyawan ${name} berhasil ditambahkan!`, 'success');
+    } catch (err: any) {
+      showToast('Gagal menambahkan karyawan: ' + err.message, 'error');
+    } finally {
+      submitBtn.innerHTML = originalText;
+      submitBtn.disabled = false;
+    }
   });
 }
 
@@ -375,10 +327,10 @@ function adminExport(records: AttendanceRecord[]): void {
 function setupAdminEvents(records: AttendanceRecord[]): void {
   // Tab switching
   document.querySelectorAll('.atab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       setAdminTab(btn.getAttribute('data-atab')!);
-      const users = getUsers();
-      const allRec = loadRecords();
+      const users = await getUsers();
+      const allRec = await loadRecords();
       const tabId = btn.getAttribute('data-atab')!;
       if (tabId === 'overview')   renderAdminOverview(allRec, users);
       if (tabId === 'today')      renderTodayAttendance(allRec, users);
@@ -406,12 +358,9 @@ function setupAdminEvents(records: AttendanceRecord[]): void {
 }
 
 // ─── Init Admin ───────────────────────────────────────────────────────────────
-export function initAdmin(session: Session): void {
-  // Seed demo data
-  seedSampleData();
-
-  const allRecords = loadRecords();
-  const users = getUsers();
+export async function initAdmin(session: Session): Promise<void> {
+  const allRecords = await loadRecords();
+  const users = await getUsers();
 
   // Set admin name in header
   const el = document.getElementById('adm-user-name');
@@ -421,7 +370,7 @@ export function initAdmin(session: Session): void {
   renderAdminOverview(allRecords, users);
   renderTodayAttendance(allRecords, users);
   renderEmployeeList(users);
-  setupAddEmployee(users);
+  setupAddEmployee();
   renderMonthlyReport(allRecords, users);
 
   const tick = () => {

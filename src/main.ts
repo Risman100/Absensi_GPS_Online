@@ -64,7 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
     adminMobileNav.style.display    = 'none';
   }
 
-  function renderView(): void {
+  async function renderView(): Promise<void> {
     const session = getCurrentSession();
     hideAll();
 
@@ -73,23 +73,30 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const isMobile = window.innerWidth <= 768;
+    const loader = document.getElementById('app-loader');
+    if (loader) loader.style.display = 'flex';
 
-    if (session.role === 'admin') {
-      adminContainer.style.display = 'grid';
-      if (isMobile) adminMobileNav.style.display = 'flex';
-      initAdmin(session);
+    try {
+      const isMobile = window.innerWidth <= 768;
 
-    } else if (session.role === 'hr') {
-      hrContainer.style.display = 'grid';
-      if (isMobile) hrMobileNav.style.display = 'flex';
-      initHR(session);
+      if (session.role === 'admin') {
+        adminContainer.style.display = 'grid';
+        if (isMobile) adminMobileNav.style.display = 'flex';
+        await initAdmin(session);
 
-    } else {
-      // employee
-      employeeContainer.style.display = 'grid';
-      if (isMobile) employeeMobileNav.style.display = 'flex';
-      initApp();
+      } else if (session.role === 'hr') {
+        hrContainer.style.display = 'grid';
+        if (isMobile) hrMobileNav.style.display = 'flex';
+        await initHR(session);
+
+      } else {
+        // employee
+        employeeContainer.style.display = 'grid';
+        if (isMobile) employeeMobileNav.style.display = 'flex';
+        await initApp();
+      }
+    } finally {
+      if (loader) loader.style.display = 'none';
     }
   }
 

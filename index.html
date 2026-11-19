@@ -10,6 +10,11 @@
     <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
   </head>
   <body>
+    <!-- Global App Loader -->
+    <div id="app-loader" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(10, 13, 26, 0.85); backdrop-filter:blur(4px); align-items:center; justify-content:center; flex-direction:column; gap:16px;">
+      <div class="spinner" style="width:40px; height:40px; border-width:4px;"></div>
+      <div style="color:var(--text-primary); font-weight:500; font-size:0.95rem;">Menyinkronkan data...</div>
+    </div>
 
     <!-- Toast container -->
     <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
@@ -1333,6 +1338,7 @@
             <label class="form-label" for="onboard-address">Alamat Lengkap</label>
             <textarea id="onboard-address" required class="form-input" rows="2" placeholder="Masukkan alamat domisili..."></textarea>
           </div>
+          <p id="onboard-error" style="display:none;font-size:12px;color:var(--rose-500);margin:-6px 0 10px;font-weight:600;"></p>
           <div class="form-group">
             <label class="form-label">Foto Wajah</label>
             <div class="onboard-photo-area" style="display:flex;flex-direction:column;gap:12px;align-items:center;">
@@ -1345,6 +1351,22 @@
           </div>
           <button type="submit" id="btn-submit-onboard" class="btn-primary" disabled style="width:100%;margin-top:16px;">Simpan Data</button>
         </form>
+      </div>
+    </div>
+
+    <!-- Profile Completion Gate Overlay (blocks dashboard until data diri + foto wajah lengkap) -->
+    <div id="profile-gate-overlay" style="display:none;position:fixed;inset:0;z-index:9998;background:var(--obsidian-950);"></div>
+
+    <!-- Face Verification Modal -->
+    <div id="verify-modal" class="modal" style="display:none;">
+      <div class="modal-content">
+        <h2 style="margin-bottom:8px;">Verifikasi Wajah</h2>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Sebelum masuk ke Dashboard Absensi, lakukan verifikasi wajah Anda terlebih dahulu.</p>
+        <div style="display:flex;justify-content:center;margin-bottom:16px;">
+          <img id="verify-photo-preview" style="display:none; width:160px; height:160px; object-fit:cover; border-radius:50%; border:2px solid var(--gold-500);" />
+        </div>
+        <div id="verify-status-text" style="text-align:center;font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Siap untuk memindai wajah.</div>
+        <button id="btn-start-verify" class="btn-primary" style="width:100%;margin-top:0;">Mulai Verifikasi Wajah</button>
       </div>
     </div>
 

@@ -30,12 +30,12 @@ function setup() {
 
   createOrUpdate("Data Karyawan", [
     "ID Karyawan", "Nama", "Email", "Password", "No Handphone", 
-    "Alamat Lengkap", "Foto Wajah (Base64)"
+    "Alamat Lengkap", "Foto Wajah (Base64)", "Role", "Departemen", "Posisi"
   ]);
 
   createOrUpdate("Cuti", [
-    "ID Request", "Nama", "Departemen", "Tipe Cuti", 
-    "Tanggal Mulai", "Tanggal Selesai", "Alasan", "Status", "Waktu Pengajuan"
+    "ID Request", "ID Karyawan", "Nama", "Departemen", "Tipe Cuti", 
+    "Tanggal Mulai", "Tanggal Selesai", "Alasan", "Status", "Waktu Pengajuan", "Penyetuju", "Alasan Ditolak"
   ]);
 }
 
@@ -61,6 +61,7 @@ function doPost(e) {
     // Helper function to save image to Google Drive
     function saveImageToDrive(base64String, fileName) {
       if (!base64String || base64String.trim() === "") return "";
+      if (base64String.indexOf('http') === 0) return base64String; // already a URL
       try {
         var base64Data = base64String.split(",")[1] || base64String;
         var blob = Utilities.newBlob(Utilities.base64Decode(base64Data), "image/jpeg", fileName + ".jpg");
@@ -68,7 +69,7 @@ function doPost(e) {
         var file = folder.createFile(blob);
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         return file.getUrl(); 
-      } catch(e) {
+      } catch(err) {
         return "Error saving image";
       }
     }
@@ -93,7 +94,10 @@ function doPost(e) {
             email: data[i][2],
             phone: data[i][4],
             address: data[i][5],
-            avatar: data[i][6]
+            avatar: data[i][6],
+            role: data[i][7] || 'employee',
+            department: data[i][8] || 'Umum',
+            position: data[i][9] || 'Staff'
           };
           break;
         }
@@ -106,7 +110,7 @@ function doPost(e) {
     }
     
     // ============================================
-    // 1. ABSENSI
+    // 1. ABSENSI (WRITE & READ)
     // ============================================
     if (payload.action === 'absen') {
       var ws = getOrCreateSheet("Absensi", [
@@ -119,7 +123,6 @@ function doPost(e) {
       var foundRow = -1;
       
       for (var i = 1; i < data.length; i++) {
-        // Cari ID Karyawan & Tanggal (Kombinasi agar bisa Update Absen Keluar)
         if (data[i][0] === payload.data.id && data[i][1] === payload.data.date) {
           foundRow = i + 1;
           break;
@@ -127,13 +130,11 @@ function doPost(e) {
       }
       
       if (foundRow > -1) {
-        // UPDATE (Absen Keluar)
         var photoOutUrl = payload.data.photoOut ? saveImageToDrive(payload.data.photoOut, "Out_" + payload.data.employeeName + "_" + payload.data.date) : "";
         ws.getRange(foundRow, 7).setValue(payload.data.clockOutTime || "");
         ws.getRange(foundRow, 8).setValue(payload.data.clockOutAddress || "");
         if (photoOutUrl) ws.getRange(foundRow, 9).setValue(photoOutUrl); 
       } else {
-        // INSERT BARU (Absen Masuk)
         var photoInUrl = payload.data.photoIn ? saveImageToDrive(payload.data.photoIn, "In_" + payload.data.employeeName + "_" + payload.data.date) : "";
         ws.appendRow([
           payload.data.id,
@@ -142,9 +143,7 @@ function doPost(e) {
           payload.data.clockInTime || "",
           payload.data.clockInAddress || "",
           payload.data.clockInStatus || "",
-          "", // ClockOutTime
-          "", // ClockOutAddress
-          "", // PhotoOut
+          "", "", "",
           photoInUrl, 
           payload.data.notes || ""
         ]);
@@ -152,20 +151,47 @@ function doPost(e) {
       return ContentService.createTextOutput("Success: Data Absensi Tersimpan");
     }
 
+    if (payload.action === 'getRecords') {
+      var ws = sheet.getSheetByName("Absensi");
+      var results = [];
+      if (ws) {
+        var data = ws.getDataRange().getValues();
+        for (var i = 1; i < data.length; i++) {
+          if (!payload.data || !payload.data.userId || data[i][0] === payload.data.userId) {
+            results.push({
+              id: data[i][0] + "_" + data[i][1], // idKaryawan_tanggal
+              userId: data[i][0],
+              date: data[i][1],
+              employeeName: data[i][2],
+              clockInTime: data[i][3],
+              clockInAddress: data[i][4],
+              clockInStatus: data[i][5],
+              clockOutTime: data[i][6],
+              clockOutAddress: data[i][7],
+              photoOutUrl: data[i][8],
+              photoInUrl: data[i][9],
+              notes: data[i][10]
+            });
+          }
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ records: results })).setMimeType(ContentService.MimeType.JSON);
+    }
+
     // ============================================
-    // 2. KARYAWAN / ONBOARDING / REGISTER
+    // 2. KARYAWAN (WRITE & READ)
     // ============================================
     if (payload.action === 'onboarding') {
       var ws = getOrCreateSheet("Data Karyawan", [
         "ID Karyawan", "Nama", "Email", "Password", "No Handphone", 
-        "Alamat Lengkap", "Foto Wajah (Base64)"
+        "Alamat Lengkap", "Foto Wajah (Base64)", "Role", "Departemen", "Posisi"
       ]);
       
       var data = ws.getDataRange().getValues();
       var foundRow = -1;
       
       for (var i = 1; i < data.length; i++) {
-        if (data[i][0] === payload.data.id) {
+        if (data[i][0] === payload.data.id || (payload.data.email && data[i][2] === payload.data.email)) {
           foundRow = i + 1;
           break;
         }
@@ -181,6 +207,9 @@ function doPost(e) {
           var avatarUrl = saveImageToDrive(payload.data.photoBase64, "Profile_" + (payload.data.employeeName || payload.data.id));
           ws.getRange(foundRow, 7).setValue(avatarUrl);
         }
+        if (payload.data.role) ws.getRange(foundRow, 8).setValue(payload.data.role);
+        if (payload.data.department) ws.getRange(foundRow, 9).setValue(payload.data.department);
+        if (payload.data.position) ws.getRange(foundRow, 10).setValue(payload.data.position);
       } else {
         var newAvatarUrl = payload.data.photoBase64 ? saveImageToDrive(payload.data.photoBase64, "Profile_" + (payload.data.employeeName || payload.data.id)) : "";
         ws.appendRow([
@@ -190,37 +219,121 @@ function doPost(e) {
           payload.data.password || "",
           payload.data.phone || "",
           payload.data.address || "",
-          newAvatarUrl
+          newAvatarUrl,
+          payload.data.role || "employee",
+          payload.data.department || "Umum",
+          payload.data.position || "Staff"
         ]);
       }
       return ContentService.createTextOutput("Success: Data Karyawan Tersimpan");
     }
 
+    if (payload.action === 'getUsers') {
+      var ws = sheet.getSheetByName("Data Karyawan");
+      var results = [];
+      if (ws) {
+        var data = ws.getDataRange().getValues();
+        for (var i = 1; i < data.length; i++) {
+          results.push({
+            id: data[i][0],
+            name: data[i][1],
+            email: data[i][2],
+            phone: data[i][4],
+            address: data[i][5],
+            avatar: data[i][6],
+            role: data[i][7] || 'employee',
+            department: data[i][8] || 'Umum',
+            position: data[i][9] || 'Staff'
+          });
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ users: results })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (payload.action === 'deleteUser') {
+      var ws = sheet.getSheetByName("Data Karyawan");
+      if (ws) {
+        var data = ws.getDataRange().getValues();
+        for (var i = 1; i < data.length; i++) {
+          if (data[i][0] === payload.data.id) {
+            ws.deleteRow(i + 1);
+            return ContentService.createTextOutput("Success: Karyawan berhasil dihapus");
+          }
+        }
+      }
+      return ContentService.createTextOutput("Error: Karyawan tidak ditemukan");
+    }
+
     // ============================================
-    // 3. CUTI
+    // 3. CUTI (WRITE & READ & UPDATE STATUS)
     // ============================================
     if (payload.action === 'cuti') {
       var ws = getOrCreateSheet("Cuti", [
-        "ID Request", "Nama", "Departemen", "Tipe Cuti", 
-        "Tanggal Mulai", "Tanggal Selesai", "Alasan", "Status", "Waktu Pengajuan"
+        "ID Request", "ID Karyawan", "Nama", "Departemen", "Tipe Cuti", 
+        "Tanggal Mulai", "Tanggal Selesai", "Alasan", "Status", "Waktu Pengajuan", "Penyetuju", "Alasan Ditolak"
       ]);
       
       ws.appendRow([
         payload.data.id,
+        payload.data.userId || "",
         payload.data.employeeName,
         payload.data.department,
         payload.data.type,
         payload.data.startDate,
         payload.data.endDate,
         payload.data.reason,
-        payload.data.status,
-        payload.data.submittedAt
+        payload.data.status || 'Pending',
+        payload.data.submittedAt,
+        "", "" // Penyetuju, Alasan Ditolak
       ]);
       return ContentService.createTextOutput("Success: Data Cuti Tersimpan");
+    }
+
+    if (payload.action === 'getLeaves') {
+      var ws = sheet.getSheetByName("Cuti");
+      var results = [];
+      if (ws) {
+        var data = ws.getDataRange().getValues();
+        for (var i = 1; i < data.length; i++) {
+          if (!payload.data || !payload.data.userId || data[i][1] === payload.data.userId) {
+            results.push({
+              id: data[i][0],
+              employeeId: data[i][1], // ID Karyawan added at column 1
+              employeeName: data[i][2],
+              department: data[i][3],
+              type: data[i][4],
+              startDate: data[i][5],
+              endDate: data[i][6],
+              reason: data[i][7],
+              status: data[i][8],
+              submittedAt: data[i][9],
+              approvedBy: data[i][10],
+              rejectedReason: data[i][11]
+            });
+          }
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ leaves: results })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (payload.action === 'updateLeaveStatus') {
+      var ws = sheet.getSheetByName("Cuti");
+      if (ws) {
+        var data = ws.getDataRange().getValues();
+        for (var i = 1; i < data.length; i++) {
+          if (data[i][0] === payload.data.id) {
+            ws.getRange(i + 1, 9).setValue(payload.data.status); // Status
+            if (payload.data.approverName) ws.getRange(i + 1, 11).setValue(payload.data.approverName); // Penyetuju
+            if (payload.data.rejectedReason) ws.getRange(i + 1, 12).setValue(payload.data.rejectedReason); // Alasan ditolak
+            return ContentService.createTextOutput("Success: Status Cuti Diperbarui");
+          }
+        }
+      }
+      return ContentService.createTextOutput("Error: Pengajuan Cuti tidak ditemukan");
     }
     
     return ContentService.createTextOutput("Error: Action tidak dikenali");
   } catch (error) {
-    return ContentService.createTextOutput("Error: " + error.toString());
+    return ContentService.createTextOutput(JSON.stringify({ error: error.toString() })).setMimeType(ContentService.MimeType.JSON);
   }
 }

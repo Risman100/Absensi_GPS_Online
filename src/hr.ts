@@ -53,20 +53,20 @@ function setHRTab(tabId: string): void {
   });
 
   switch (tabId) {
-    case 'overview':    renderHROverview(); break;
+    case 'overview':    renderHROverview().catch(console.error); break;
     case 'approval':    renderApprovalList(); break;
-    case 'employees':   renderHREmployees(); break;
-    case 'reports':     renderHRReports(); break;
+    case 'employees':   renderHREmployees().catch(console.error); break;
+    case 'reports':     renderHRReports().catch(console.error); break;
     case 'announce':    renderAnnouncementsManager(); break;
   }
 }
 
 // ─── Overview ─────────────────────────────────────────────────────────────────
-function renderHROverview(): void {
-  const records = loadRecords();
+async function renderHROverview(): Promise<void> {
+  const records = await loadRecords();
   const leaves = loadLeaveRequests();
   const overtimes = loadOvertimeRequests();
-  const users = getUsers().filter(u => u.role === 'employee');
+  const users = (await getUsers()).filter(u => u.role === 'employee');
 
   const today = getISODate();
   const todayRecords = records.filter(r => r.date === today);
@@ -269,12 +269,12 @@ function updateHRPendingBadge(): void {
 }
 
 // ─── Employees ────────────────────────────────────────────────────────────────
-function renderHREmployees(): void {
+async function renderHREmployees(): Promise<void> {
   const tbody = document.getElementById('hr-emp-tbody');
   if (!tbody) return;
 
-  const users = getUsers().filter(u => u.role === 'employee');
-  const records = loadRecords();
+  const users = (await getUsers()).filter(u => u.role === 'employee');
+  const records = await loadRecords();
   const today = getISODate();
 
   tbody.innerHTML = users.map(u => {
@@ -299,7 +299,7 @@ function renderHREmployees(): void {
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
-function renderHRReports(): void {
+async function renderHRReports(): Promise<void> {
   const select = document.getElementById('hr-report-month') as HTMLSelectElement;
   if (!select) return;
 
@@ -315,15 +315,15 @@ function renderHRReports(): void {
       select.appendChild(opt);
     }
   }
-  renderHRReportTable(select.value);
+  renderHRReportTable(select.value).catch(console.error);
 }
 
-function renderHRReportTable(month: string): void {
+async function renderHRReportTable(month: string): Promise<void> {
   const tbody = document.getElementById('hr-report-tbody');
   if (!tbody) return;
 
-  const records = loadRecords().filter(r => r.date.startsWith(month));
-  const users = getUsers().filter(u => u.role === 'employee');
+  const records = (await loadRecords()).filter(r => r.date.startsWith(month));
+  const users = (await getUsers()).filter(u => u.role === 'employee');
 
   tbody.innerHTML = users.map(u => {
     const empRecords = records.filter(r => r.employeeId === u.employeeId);
@@ -417,8 +417,8 @@ function setupHREventListeners(): void {
   });
 
   // Report export
-  document.getElementById('hr-btn-export')?.addEventListener('click', () => {
-    const records = loadRecords();
+  document.getElementById('hr-btn-export')?.addEventListener('click', async () => {
+    const records = await loadRecords();
     if (records.length === 0) { showToast('Tidak ada data', 'error'); return; }
     exportToCSV(records);
     showToast('Laporan berhasil diekspor!', 'success');

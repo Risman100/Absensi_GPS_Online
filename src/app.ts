@@ -17,7 +17,7 @@ import {
   clearAttendanceMarkers, updateOfficeLocation, resizeMap,
   focusMapMarker,
 } from './map';
-import { getCurrentSession, getUsers, saveUsers } from './auth';
+import { getCurrentSession, getUsers } from './auth';
 import {
   loadLeaveRequests, submitLeaveRequest, deleteLeaveRequest,
   loadOvertimeRequests, submitOvertimeRequest,
@@ -37,7 +37,17 @@ let currentLeaveTab = 'leave'; // 'leave' | 'overtime' | 'correction'
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 export async function initApp(): Promise<void> {
-  records = loadRecords();
+  const session = getCurrentSession();
+  
+  if (session) {
+    try {
+      records = await loadRecords(session.userId);
+    } catch (e) {
+      console.error("Gagal memuat absensi", e);
+    }
+  } else {
+    records = [];
+  }
 
   try {
     console.log("[FaceAPI] Memuat model...");
@@ -48,7 +58,6 @@ export async function initApp(): Promise<void> {
   }
 
   // Sync employee with current active session
-  const session = getCurrentSession();
   if (session) {
     employee = {
       id: session.userId, // Use Firebase UID instead of defaulting to EMP001
@@ -60,7 +69,7 @@ export async function initApp(): Promise<void> {
       avatar: session.avatar || ''
     };
 
-    const users = getUsers();
+    const users = await getUsers();
     const activeUser = users.find(u => (u.email || "").toLowerCase() === (session.email || "").toLowerCase());
     if (activeUser) {
       employee.position = activeUser.position || 'Staff';
@@ -85,28 +94,7 @@ export async function initApp(): Promise<void> {
         session.avatar = employee.avatar;
         sessionStorage.setItem('absensi_session', JSON.stringify(session));
 
-        // Update Mock DB
-        const userEmail = (session.email || "").toLowerCase();
-        const userIdx = users.findIndex(u => (u.email || "").toLowerCase() === userEmail);
-        if (userIdx !== -1) {
-          users[userIdx].phone = employee.phone;
-          users[userIdx].address = employee.address;
-          users[userIdx].avatar = employee.avatar;
-          saveUsers(users);
-        } else {
-          users.push({
-            id: session.userId,
-            email: session.email || "",
-            name: session.name || "Unknown",
-            role: session.role || "employee",
-            department: 'Umum',
-            position: 'Staff',
-            phone: employee.phone,
-            address: employee.address,
-            avatar: employee.avatar
-          });
-          saveUsers(users);
-        }
+        // We no longer update Mock DB locally because saveUsers is removed.
       }
     } catch (err) {
       console.warn("Gagal mengambil data dari server Google Sheets", err);
@@ -125,28 +113,46 @@ export async function initApp(): Promise<void> {
 
   updateDashboard();
   startClock();
-  initMap('map-container', config.officeLocation);
   setupEventListeners();
-  startGpsWatch();
 
-  // Restore today's map markers
-  const today = getTodayRecord(records);
-  if (today?.clockIn) addAttendanceMarker(today.clockIn.gps, 'in', `Clock In ${formatTime(new Date(today.clockIn.time))}`);
-  if (today?.clockOut) addAttendanceMarker(today.clockOut.gps, 'out', `Clock Out ${formatTime(new Date(today.clockOut.time))}`);
-  updateButtonState();
-
-  // Render announcements on home panel
-  renderHomeAnnouncements();
-  
-  // Check Onboarding
-  if (!employee.phone || !employee.avatar) {
+  // ── Profile Completion + Face Verification Gate ──
+  if (!isProfileComplete()) {
+    // Dashboard dikunci sampai data diri + foto wajah lengkap & terverifikasi
+    const overlay = document.getElementById('profile-gate-overlay');
+    if (overlay) overlay.style.display = 'block';
     showOnboardingModal();
+    return; // Jangan inisialisasi GPS/map sampai gate lolos
   }
+
+  requestFaceGate(() => {
+    // Dashboard dibuka setelah verifikasi wajah sukses
+    initMap('map-container', config.officeLocation);
+    startGpsWatch();
+    const today = getTodayRecord(records);
+    if (today?.clockIn) addAttendanceMarker(today.clockIn.gps, 'in', `Clock In ${formatTime(new Date(today.clockIn.time))}`);
+    if (today?.clockOut) addAttendanceMarker(today.clockOut.gps, 'out', `Clock Out ${formatTime(new Date(today.clockOut.time))}`);
+    updateButtonState();
+    renderHomeAnnouncements();
+  });
+}
+
+/** Dipanggil setelah gate lolos untuk menghilangkan overlay pemblokir */
+function releaseDashboardGate(): void {
+  const overlay = document.getElementById('profile-gate-overlay');
+  if (overlay) overlay.style.display = 'none';
 }
 
 // ─── Onboarding ──────────────────────────────────────────────────────────────
 let onboardCamera: CameraService | null = null;
 let onboardBase64: string = '';
+
+/** Apakah data diri wajib sudah lengkap (telepon + alamat + foto wajah valid) */
+function isProfileComplete(): boolean {
+  const saved = localStorage.getItem('absensi_onboard_photo');
+  return !!(employee.phone && employee.address && employee.avatar
+    && employee.avatar !== '[Tersimpan di Drive]'
+    && saved && saved.length > 100);
+}
 
 function showOnboardingModal() {
   const modal = document.getElementById('onboarding-modal');
@@ -156,47 +162,61 @@ function showOnboardingModal() {
   const preview = document.getElementById('onboard-photo-preview') as HTMLImageElement;
   const form = document.getElementById('onboarding-form') as HTMLFormElement;
   const btnSubmit = document.getElementById('btn-submit-onboard') as HTMLButtonElement;
+  const errEl = document.getElementById('onboard-error') as HTMLElement;
+
+  if (errEl) errEl.style.display = 'none';
+
+  // Restore saved photo if it exists from a previous session
+  const savedPhoto = localStorage.getItem('absensi_onboard_photo');
+  if (savedPhoto) {
+    onboardBase64 = savedPhoto;
+    preview.src = savedPhoto;
+    preview.style.display = 'block';
+    btnSubmit.disabled = false;
+    if (btnCamera) {
+      btnCamera.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+        <span style="font-size:13px; font-weight:500;">Foto Ulang</span>
+      `;
+      btnCamera.style.height = 'auto';
+      btnCamera.style.padding = '12px';
+    }
+  } else {
+    btnSubmit.disabled = true;
+    preview.style.display = 'none';
+  }
   
   btnCamera?.addEventListener('click', async () => {
-    if (!onboardCamera) {
-      onboardCamera = new CameraService('camera-video');
-    }
+    if (!onboardCamera) onboardCamera = new CameraService('camera-video');
     const camModal = document.getElementById('camera-modal');
-    if (camModal) camModal.style.display = 'flex';
-    await onboardCamera.start();
-    
-    const btnCapture = document.getElementById('btn-capture');
-    const captureHandler = () => {
-      onboardBase64 = onboardCamera!.captureBase64(320);
-      onboardCamera!.stop();
+    if (camModal) {
+      camModal.setAttribute('data-flow', 'onboarding');
+      camModal.style.display = 'flex';
+    }
+    try {
+      await onboardCamera.start();
+    } catch (err: any) {
+      showToast(err.message, 'error');
       if (camModal) camModal.style.display = 'none';
-      preview.src = onboardBase64;
-      preview.style.display = 'block';
-      
-      if (btnCamera) {
-        btnCamera.innerHTML = `
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
-          <span style="font-size:13px; font-weight:500;">Foto Ulang</span>
-        `;
-        btnCamera.style.height = 'auto';
-        btnCamera.style.padding = '12px';
-      }
-      
-      btnSubmit.disabled = false;
-      btnCapture?.removeEventListener('click', captureHandler);
-    };
-    btnCapture?.addEventListener('click', captureHandler);
+    }
   });
   
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const phone = (document.getElementById('onboard-phone') as HTMLInputElement).value;
-    const address = (document.getElementById('onboard-address') as HTMLTextAreaElement).value;
+    const phone = (document.getElementById('onboard-phone') as HTMLInputElement).value.trim();
+    const address = (document.getElementById('onboard-address') as HTMLTextAreaElement).value.trim();
+
+    if (errEl) errEl.style.display = 'none';
+    const fail = (msg: string) => { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } };
+
+    if (!phone || !address) { fail('Lengkapi Nomor Telepon dan Alamat Lengkap terlebih dahulu.'); return; }
+    if (!onboardBase64 || onboardBase64.length < 100) { fail('Foto Wajah wajib diambil sebelum data dapat disimpan.'); return; }
     
     employee.phone = phone;
     employee.address = address;
     employee.avatar = "[Tersimpan di Drive]";
     saveEmployee(employee);
+    localStorage.setItem('absensi_onboard_photo', onboardBase64);
     
     const session = getCurrentSession();
     if (session) {
@@ -204,36 +224,6 @@ function showOnboardingModal() {
       session.address = address;
       session.avatar = "[Tersimpan di Drive]";
       sessionStorage.setItem('absensi_session', JSON.stringify(session));
-      
-      try {
-        // Also update mock db
-        const users = getUsers();
-        const userEmail = (session.email || "").toLowerCase();
-        const userIdx = users.findIndex(u => (u.email || "").toLowerCase() === userEmail);
-        
-        if (userIdx !== -1) {
-          users[userIdx].phone = phone;
-          users[userIdx].address = address;
-          users[userIdx].avatar = "[Tersimpan di Drive]";
-          saveUsers(users);
-        } else {
-          // If somehow not in mock db, add it
-          users.push({
-            id: session.email || session.userId,
-            email: session.email || "",
-            name: session.name || "Unknown",
-            role: session.role || "employee",
-            department: 'Umum',
-            position: 'Staff',
-            phone: phone,
-            address: address,
-            avatar: "[Tersimpan di Drive]"
-          });
-          saveUsers(users);
-        }
-      } catch (err) {
-        console.error("Failed to update local mock DB:", err);
-      }
     }
     
     // Backup onboarding to Google Sheets
@@ -247,8 +237,72 @@ function showOnboardingModal() {
     
     if (modal) modal.style.display = 'none';
     showToast('Data diri berhasil disimpan!', 'success');
+    // Lanjut ke verifikasi wajah sebelum dashboard dibuka
+    requestFaceGate(() => {
+      initMap('map-container', config.officeLocation);
+      startGpsWatch();
+      renderHomeAnnouncements();
+      releaseDashboardGate();
+    });
   });
 }
+
+// ─── Face Verification Gate (setelah login / lengkapi data diri) ─────────────────────
+let verifyCamera: CameraService | null = null;
+let verifyCallback: (() => void) | null = null;
+
+/**
+ * Gate wajah: tampilkan overlay + modal verifikasi.
+ * Dashboard baru boleh diakses setelah callback dipanggil (verifikasi sukses).
+ */
+function requestFaceGate(onSuccess: () => void): void {
+  verifyCallback = onSuccess;
+  const overlay = document.getElementById('profile-gate-overlay');
+  const verifyModal = document.getElementById('verify-modal');
+  const preview = document.getElementById('verify-photo-preview') as HTMLImageElement;
+  const status = document.getElementById('verify-status-text');
+  const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
+
+  if (preview) { preview.src = ''; preview.style.display = 'none'; }
+  if (status) status.textContent = 'Siap untuk memindai wajah.';
+  if (btn) { btn.disabled = false; btn.style.display = ''; btn.textContent = 'Mulai Verifikasi Wajah'; }
+  if (overlay) overlay.style.display = 'block';
+  if (verifyModal) verifyModal.style.display = 'flex';
+}
+
+function grantDashboardAccess(): void {
+  const overlay = document.getElementById('profile-gate-overlay');
+  const verifyModal = document.getElementById('verify-modal');
+  if (overlay) overlay.style.display = 'none';
+  if (verifyModal) verifyModal.style.display = 'none';
+  verifyCamera?.stop();
+  verifyCamera = null;
+  showToast('✅ Verifikasi wajah berhasil. Selamat bekerja!', 'success');
+  verifyCallback?.();
+  verifyCallback = null;
+  releaseDashboardGate();
+}
+
+document.getElementById('btn-start-verify')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
+  const camModal = document.getElementById('camera-modal');
+
+  if (!verifyCamera) verifyCamera = new CameraService('camera-video');
+  btn.disabled = true;
+  btn.textContent = 'Memproses...';
+  if (camModal) {
+    camModal.setAttribute('data-flow', 'verify');
+    camModal.style.display = 'flex';
+  }
+  try {
+    await verifyCamera.start();
+  } catch (err: any) {
+    showToast(err.message, 'error');
+    if (camModal) camModal.style.display = 'none';
+    btn.disabled = false;
+    btn.textContent = 'Coba Lagi';
+  }
+});
 
 // ─── Clock ────────────────────────────────────────────────────────────────────
 function startClock(): void {
@@ -339,13 +393,78 @@ async function startAttendanceFlow(type: 'in' | 'out') {
 }
 
 document.getElementById('btn-capture')?.addEventListener('click', async () => {
-  if (!attCamera || document.getElementById('camera-modal')?.style.display === 'none') return;
-  
   const camModal = document.getElementById('camera-modal');
-  if (document.getElementById('onboarding-modal')?.style.display === 'flex') return;
+  if (camModal?.style.display === 'none' || !camModal) return;
 
   const flow = camModal?.getAttribute('data-flow');
   
+  // ── Flow: Verifikasi Wajah ──
+  if (flow === 'verify') {
+    if (!verifyCamera) return;
+    const photo = verifyCamera.captureBase64(320);
+    verifyCamera.stop();
+    camModal.style.display = 'none';
+    camModal.removeAttribute('data-flow');
+
+    const status = document.getElementById('verify-status-text');
+    const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
+    const preview = document.getElementById('verify-photo-preview') as HTMLImageElement;
+    preview.src = photo;
+    preview.style.display = 'block';
+
+    try {
+      if (status) status.textContent = 'Memvalidasi wajah...';
+      const tempImg = new Image();
+      tempImg.src = photo;
+      await new Promise((r) => { tempImg.onload = r; });
+      const detections = await faceapi.detectAllFaces(tempImg, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.15, inputSize: 320 }));
+      if (detections.length === 0) {
+        if (status) status.innerHTML = '<span style="color:var(--rose-500)">❌ Wajah tidak terdeteksi. Coba lagi dengan pencahayaan lebih baik.</span>';
+        btn.disabled = false;
+        btn.textContent = 'Coba Lagi';
+        return;
+      }
+      if (status) status.innerHTML = '<span style="color:var(--emerald-500)">✅ Verifikasi berhasil!</span>';
+      setTimeout(grantDashboardAccess, 800);
+    } catch (err: any) {
+      if (status) status.textContent = 'Error: ' + err.message;
+      btn.disabled = false;
+      btn.textContent = 'Coba Lagi';
+    }
+    return;
+  }
+
+  // ── Flow: Onboarding Foto Wajah ──
+  if (flow === 'onboarding') {
+    if (!onboardCamera) return;
+    onboardBase64 = onboardCamera.captureBase64(320);
+    onboardCamera.stop();
+    camModal.style.display = 'none';
+    camModal.removeAttribute('data-flow');
+
+    const preview = document.getElementById('onboard-photo-preview') as HTMLImageElement;
+    const btnSubmit = document.getElementById('btn-submit-onboard') as HTMLButtonElement;
+    const btnCamera = document.getElementById('btn-onboard-camera');
+    preview.src = onboardBase64;
+    preview.style.display = 'block';
+    btnSubmit.disabled = false;
+    const errEl = document.getElementById('onboard-error');
+    if (errEl) errEl.style.display = 'none';
+
+    if (btnCamera) {
+      btnCamera.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+        <span style="font-size:13px; font-weight:500;">Foto Ulang</span>
+      `;
+      btnCamera.style.height = 'auto';
+      btnCamera.style.padding = '12px';
+    }
+    return;
+  }
+
+  if (!attCamera) return;
+  if (document.getElementById('onboarding-modal')?.style.display === 'flex') return;
+
   currentPhotoBase64 = attCamera.captureBase64(320);
   attCamera.stop();
   if (camModal) {
@@ -358,8 +477,6 @@ document.getElementById('btn-capture')?.addEventListener('click', async () => {
     if (facePreview) {
       facePreview.innerHTML = `<img src="${currentPhotoBase64}" style="width:100%;height:100%;object-fit:cover" />`;
     }
-    // Temporarily, we can just save this directly to google drive or local storage.
-    // The dummy didn't save, but let's at least show it works.
     showToast('Wajah berhasil dipindai! (Simulasi pendaftaran)', 'success');
     return;
   }
@@ -368,9 +485,17 @@ document.getElementById('btn-capture')?.addEventListener('click', async () => {
 });
 
 document.getElementById('btn-camera-close')?.addEventListener('click', () => {
-  if (attCamera) attCamera.stop();
-  if (typeof onboardCamera !== 'undefined' && onboardCamera) onboardCamera.stop();
   const camModal = document.getElementById('camera-modal');
+  const flow = camModal?.getAttribute('data-flow');
+  
+  if (flow === 'verify') {
+    verifyCamera?.stop();
+    const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
+    if (btn) { btn.disabled = false; btn.textContent = 'Mulai Verifikasi Wajah'; }
+  } else {
+    if (attCamera) attCamera.stop();
+    onboardCamera?.stop();
+  }
   if (camModal) camModal.style.display = 'none';
 });
 
@@ -394,7 +519,7 @@ async function showPreviewModal() {
     tempImg.src = currentPhotoBase64;
     await new Promise((resolve) => { tempImg.onload = resolve; });
     
-    const detections = await faceapi.detectAllFaces(tempImg, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 }));
+    const detections = await faceapi.detectAllFaces(tempImg, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.15, inputSize: 320 }));
     if (detections.length === 0) {
       if (statusText) statusText.innerHTML = `<span style="color:var(--rose-500)">❌ Validasi Wajah Gagal: Wajah tidak terdeteksi. Tolong buka kacamata atau apapun yang menutupi wajah Anda.</span>`;
       return; 
@@ -477,8 +602,8 @@ async function executeClockIn(): Promise<void> {
     }
     record.clockIn = { time: now.toISOString(), gps, address, status, photo: "[Tersimpan di Drive]" };
 
-    saveRecords(records);
-    backupToGoogleSheets('absen', {
+    await saveRecords(records);
+    await backupToGoogleSheets('absen', {
       id: record.id,
       employeeName: record.employeeName,
       date: record.date,
@@ -526,8 +651,8 @@ async function executeClockOut(): Promise<void> {
     today.clockOut = { time: now.toISOString(), gps, address, photo: "[Tersimpan di Drive]" };
     today.workDuration = Math.round((now.getTime() - new Date(today.clockIn.time).getTime()) / 60000);
 
-    saveRecords(records);
-    backupToGoogleSheets('absen', {
+    await saveRecords(records);
+    await backupToGoogleSheets('absen', {
       id: today.id,
       employeeName: today.employeeName,
       date: today.date,

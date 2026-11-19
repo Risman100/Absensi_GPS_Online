@@ -183,16 +183,14 @@ export async function getUserFromGoogleSheets(id: string, email: string): Promis
   }
 }
 
-export function saveRecords(records: AttendanceRecord[]): void {
-  localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(records));
+import { fetchAttendanceRecords } from './api';
+
+export async function saveRecords(_records?: AttendanceRecord[]): Promise<void> {
+  // We no longer overwrite the whole array. Saving is done per-record via backupToGoogleSheets in app.ts.
 }
 
-export function loadRecords(): AttendanceRecord[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEYS.RECORDS) ?? '[]');
-  } catch {
-    return [];
-  }
+export async function loadRecords(userId?: string): Promise<AttendanceRecord[]> {
+  return await fetchAttendanceRecords(userId);
 }
 
 export function saveEmployee(employee: Employee): void {

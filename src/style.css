@@ -1869,6 +1869,11 @@ body::before {
   filter: invert(0.6) sepia(1) saturate(2) hue-rotate(5deg);
 }
 
+select.form-input option {
+  background-color: var(--obsidian-900);
+  color: var(--text-primary);
+}
+
 .btn-primary {
   background: var(--grad-gold);
   color: #FFFFFF !important;
@@ -3378,4 +3383,135 @@ body::before {
   height: 150px;
   border-radius: 8px;
   border: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+/* ═══ PROFILE COMPLETION GATE & FACE VERIFY (Light/Dark) ═══ */
+#profile-gate-overlay {
+  background: var(--obsidian-950);
+  transition: background var(--t-med);
+}
+
+.modal-content h2 {
+  color: var(--text-primary);
+}
+
+.modal-content p {
+  color: var(--text-muted);
+}
+
+/* ─── Light Theme: Login Page ─── */
+:root.light-theme .login-screen {
+  background: linear-gradient(160deg, #E2E8F0 0%, #F8FAFC 100%);
+}
+
+:root.light-theme .auth-switch {
+  color: #475569;
+}
+
+:root.light-theme .auth-switch a {
+  color: #2563EB;
+}
+
+:root.light-theme .auth-divider {
+  color: #64748B;
+}
+
+:root.light-theme .auth-divider::before,
+:root.light-theme .auth-divider::after {
+  border-bottom: 1px solid #E2E8F0;
+}
+
+:root.light-theme .btn-toggle-password:hover {
+  color: #0F172A;
+}
+
+/* ─── Light Theme: Onboarding / Verify / Preview Modal ─── */
+:root.light-theme .modal-content {
+  background: #FFFFFF;
+  border-color: #E2E8F0;
+  box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.15);
+}
+
+:root.light-theme .modal-content h2,
+:root.light-theme .modal-content h3 {
+  color: #0F172A;
+}
+
+:root.light-theme .modal-content p {
+  color: #64748B;
+}
+
+:root.light-theme .form-label {
+  color: #475569;
+}
+
+:root.light-theme .form-input {
+  background: #F8FAFC;
+  border-color: #CBD5E1;
+  color: #0F172A;
+}
+
+:root.light-theme .form-input:focus {
+  background: #FFFFFF;
+  border-color: #2563EB;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+:root.light-theme .form-input::placeholder {
+  color: #94A3B8;
+}
+
+:root.light-theme .modal {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+:root.light-theme .btn-primary {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+}
+
+:root.light-theme .btn-primary:hover {
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.4);
+}
+
+:root.light-theme #btn-onboard-camera {
+  background: #F1F5F9;
+  border-color: #CBD5E1;
+  color: #64748B;
+}
+
+:root.light-theme #btn-onboard-camera:hover {
+  border-color: #2563EB;
+  color: #2563EB;
+}
+
+:root.light-theme #onboard-photo-preview {
+  border-color: #CBD5E1;
+}
+
+:root.light-theme #verify-photo-preview {
+  border-color: #2563EB;
+}
+
+:root.light-theme .preview-status-text,
+:root.light-theme #verify-status-text {
+  color: #475569;
+}
+
+:root.light-theme .preview-img,
+:root.light-theme .preview-map {
+  border-color: #CBD5E1;
+}
+
+:root.light-theme .camera-container {
+  border-color: rgba(15, 23, 42, 0.2);
+}
+
+:root.light-theme .toast {
+  background: rgba(255, 255, 255, 0.97);
+  border-color: #E2E8F0;
+  color: #0F172A;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
