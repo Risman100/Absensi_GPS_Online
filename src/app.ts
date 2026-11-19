@@ -25,14 +25,17 @@ import {
   leaveTypeLabel, leaveTypeBadgeClass, statusBadgeClass, statusLabel,
 } from './leave';
 import { CameraService } from './camera';
+import { FaceScanner, loadFaceLandmarker } from './face-scanner';
 import L from 'leaflet';
 import { seedDefaultAnnouncements, getAnnouncementsForRole, relativeDate } from './announcement';
-declare const faceapi: any;
+let faceScanner: FaceScanner | null = null;
+let attendanceFaceLandmarker: import('@mediapipe/tasks-vision').FaceLandmarker | null = null;
 // ─── State ────────────────────────────────────────────────────────────────────
 let records: AttendanceRecord[] = [];
 let employee: Employee;
 let config: AppConfig;
 let currentGps: GpsCoordinates | null = null;
+let gpsWatchId: number | null = null;
 let currentLeaveTab = 'leave'; // 'leave' | 'overtime' | 'correction'
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -47,14 +50,6 @@ export async function initApp(): Promise<void> {
     }
   } else {
     records = [];
-  }
-
-  try {
-    console.log("[FaceAPI] Memuat model...");
-    await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
-    console.log("[FaceAPI] Model berhasil dimuat.");
-  } catch (err) {
-    console.error("[FaceAPI] Gagal memuat model:", err);
   }
 
   // Sync employee with current active session
@@ -263,9 +258,32 @@ function requestFaceGate(onSuccess: () => void): void {
   const status = document.getElementById('verify-status-text');
   const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
 
+  faceScanner?.dispose();
+  faceScanner = null;
   if (preview) { preview.src = ''; preview.style.display = 'none'; }
   if (status) status.textContent = 'Siap untuk memindai wajah.';
-  if (btn) { btn.disabled = false; btn.style.display = ''; btn.textContent = 'Mulai Verifikasi Wajah'; }
+  if (btn) { btn.disabled = false; btn.style.display = ''; btn.textContent = 'Mulai Scan'; }
+  const scannerVideo = document.getElementById('face-scanner-video') as HTMLVideoElement;
+  const scannerCanvas = document.getElementById('face-scanner-canvas') as HTMLCanvasElement;
+  const scannerStatus = document.getElementById('face-scanner-status');
+  const cameraIndicator = document.getElementById('face-camera-indicator');
+  const stopButton = document.getElementById('btn-stop-face-scan') as HTMLButtonElement;
+  if (scannerVideo && scannerCanvas && scannerStatus && cameraIndicator && btn && stopButton) {
+    faceScanner = new FaceScanner({
+      video: scannerVideo,
+      canvas: scannerCanvas,
+      status: scannerStatus,
+      cameraIndicator,
+      startButton: btn,
+      stopButton,
+      onFaceDetected: () => {
+        if (verifyCallback) {
+          if (status) status.textContent = 'Wajah terdeteksi. Verifikasi berhasil.';
+          window.setTimeout(grantDashboardAccess, 800);
+        }
+      },
+    });
+  }
   if (overlay) overlay.style.display = 'block';
   if (verifyModal) verifyModal.style.display = 'flex';
 }
@@ -275,6 +293,8 @@ function grantDashboardAccess(): void {
   const verifyModal = document.getElementById('verify-modal');
   if (overlay) overlay.style.display = 'none';
   if (verifyModal) verifyModal.style.display = 'none';
+  faceScanner?.dispose();
+  faceScanner = null;
   verifyCamera?.stop();
   verifyCamera = null;
   showToast('✅ Verifikasi wajah berhasil. Selamat bekerja!', 'success');
@@ -283,25 +303,10 @@ function grantDashboardAccess(): void {
   releaseDashboardGate();
 }
 
-document.getElementById('btn-start-verify')?.addEventListener('click', async () => {
-  const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
-  const camModal = document.getElementById('camera-modal');
-
-  if (!verifyCamera) verifyCamera = new CameraService('camera-video');
-  btn.disabled = true;
-  btn.textContent = 'Memproses...';
-  if (camModal) {
-    camModal.setAttribute('data-flow', 'verify');
-    camModal.style.display = 'flex';
-  }
-  try {
-    await verifyCamera.start();
-  } catch (err: any) {
-    showToast(err.message, 'error');
-    if (camModal) camModal.style.display = 'none';
-    btn.disabled = false;
-    btn.textContent = 'Coba Lagi';
-  }
+document.getElementById('btn-stop-face-scan')?.addEventListener('click', () => {
+  faceScanner?.stopScanning();
+  const scannerStatus = document.getElementById('face-scanner-status');
+  if (scannerStatus) scannerStatus.textContent = 'Scanner dihentikan. Tekan Mulai Scan untuk memulai kembali.';
 });
 
 // ─── Clock ────────────────────────────────────────────────────────────────────
@@ -320,7 +325,8 @@ function startGpsWatch(): void {
     return;
   }
 
-  navigator.geolocation.watchPosition(
+  if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+  gpsWatchId = navigator.geolocation.watchPosition(
     (pos) => {
       currentGps = {
         latitude: pos.coords.latitude,
@@ -329,6 +335,8 @@ function startGpsWatch(): void {
         altitude: pos.coords.altitude,
         timestamp: pos.timestamp,
       };
+      const refreshButton = document.getElementById('btn-refresh-gps') as HTMLButtonElement | null;
+      if (refreshButton) refreshButton.disabled = false;
       setGpsStatus('success', 'GPS Aktif', currentGps.accuracy);
       updateUserPosition(currentGps);
       renderGpsInfo(currentGps.latitude, currentGps.longitude, currentGps.accuracy, currentGps.altitude);
@@ -398,42 +406,7 @@ document.getElementById('btn-capture')?.addEventListener('click', async () => {
 
   const flow = camModal?.getAttribute('data-flow');
   
-  // ── Flow: Verifikasi Wajah ──
-  if (flow === 'verify') {
-    if (!verifyCamera) return;
-    const photo = verifyCamera.captureBase64(320);
-    verifyCamera.stop();
-    camModal.style.display = 'none';
-    camModal.removeAttribute('data-flow');
-
-    const status = document.getElementById('verify-status-text');
-    const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
-    const preview = document.getElementById('verify-photo-preview') as HTMLImageElement;
-    preview.src = photo;
-    preview.style.display = 'block';
-
-    try {
-      if (status) status.textContent = 'Memvalidasi wajah...';
-      const tempImg = new Image();
-      tempImg.src = photo;
-      await new Promise((r) => { tempImg.onload = r; });
-      const detections = await faceapi.detectAllFaces(tempImg, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.15, inputSize: 320 }));
-      if (detections.length === 0) {
-        if (status) status.innerHTML = '<span style="color:var(--rose-500)">❌ Wajah tidak terdeteksi. Coba lagi dengan pencahayaan lebih baik.</span>';
-        btn.disabled = false;
-        btn.textContent = 'Coba Lagi';
-        return;
-      }
-      if (status) status.innerHTML = '<span style="color:var(--emerald-500)">✅ Verifikasi berhasil!</span>';
-      setTimeout(grantDashboardAccess, 800);
-    } catch (err: any) {
-      if (status) status.textContent = 'Error: ' + err.message;
-      btn.disabled = false;
-      btn.textContent = 'Coba Lagi';
-    }
-    return;
-  }
-
+  // Face-gate scanning is handled by the dedicated MediaPipe scanner component.
   // ── Flow: Onboarding Foto Wajah ──
   if (flow === 'onboarding') {
     if (!onboardCamera) return;
@@ -491,7 +464,7 @@ document.getElementById('btn-camera-close')?.addEventListener('click', () => {
   if (flow === 'verify') {
     verifyCamera?.stop();
     const btn = document.getElementById('btn-start-verify') as HTMLButtonElement;
-    if (btn) { btn.disabled = false; btn.textContent = 'Mulai Verifikasi Wajah'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Mulai Scan'; }
   } else {
     if (attCamera) attCamera.stop();
     onboardCamera?.stop();
@@ -514,20 +487,25 @@ async function showPreviewModal() {
 
   try {
     if (statusText) statusText.innerHTML = 'Memvalidasi wajah... <div class="spinner" style="display:inline-block;width:12px;height:12px;"></div>';
-    
+    attendanceFaceLandmarker ??= await loadFaceLandmarker();
     const tempImg = new Image();
+    const imageLoaded = new Promise<void>((resolve, reject) => {
+      tempImg.onload = () => resolve();
+      tempImg.onerror = () => reject(new Error('Foto gagal dimuat. Silakan ambil ulang.'));
+    });
     tempImg.src = currentPhotoBase64;
-    await new Promise((resolve) => { tempImg.onload = resolve; });
-    
-    const detections = await faceapi.detectAllFaces(tempImg, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.15, inputSize: 320 }));
-    if (detections.length === 0) {
+    await imageLoaded;
+
+    if (!attendanceFaceLandmarker) attendanceFaceLandmarker = await loadFaceLandmarker();
+    const faceResult = attendanceFaceLandmarker.detect(tempImg);
+    if (faceResult.faceLandmarks.length === 0) {
       if (statusText) statusText.innerHTML = `<span style="color:var(--rose-500)">❌ Validasi Wajah Gagal: Wajah tidak terdeteksi. Tolong buka kacamata atau apapun yang menutupi wajah Anda.</span>`;
       return; 
     }
 
     if (statusText) statusText.innerHTML = 'Mendapatkan lokasi GPS... <div class="spinner" style="display:inline-block;width:12px;height:12px;"></div>';
 
-    const gps = await getCurrentPosition();
+    const gps = await getCurrentPosition(currentGps);
     currentGps = gps;
     const dist = calculateDistance(gps.latitude, gps.longitude, config.officeLocation.latitude, config.officeLocation.longitude);
     
@@ -860,9 +838,11 @@ function setupEventListeners(): void {
 
   // Refresh GPS
   document.getElementById('btn-refresh-gps')?.addEventListener('click', async () => {
-    setGpsStatus('loading', 'Memperbarui lokasi...');
+    const refreshButton = document.getElementById('btn-refresh-gps') as HTMLButtonElement;
+    refreshButton.disabled = true;
+    setGpsStatus('loading', 'Mencari lokasi GPS...');
     try {
-      const gps = await getCurrentPosition();
+      const gps = await getCurrentPosition(currentGps);
       currentGps = gps;
       setGpsStatus('success', 'GPS Aktif', gps.accuracy);
       updateUserPosition(gps);
@@ -873,6 +853,8 @@ function setupEventListeners(): void {
     } catch (err: any) {
       setGpsStatus('error', err.message);
       showToast(err.message, 'error');
+    } finally {
+      refreshButton.disabled = false;
     }
   });
 

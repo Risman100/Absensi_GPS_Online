@@ -7,7 +7,6 @@
     <meta name="description" content="Aplikasi absensi modern berbasis GPS untuk karyawan dan perusahaan. Clock-in dan clock-out dengan verifikasi lokasi GPS real-time." />
     <meta name="theme-color" content="#0a0d1a" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e8b84b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/><circle cx='12' cy='10' r='3'/></svg>" />
-    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
   </head>
   <body>
     <!-- Global App Loader -->
@@ -1294,6 +1293,7 @@
     <div id="camera-modal" class="modal camera-modal" style="display:none;">
       <div class="camera-container">
         <video id="camera-video" autoplay playsinline></video>
+        <canvas id="camera-face-overlay" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;"></canvas>
         <div style="position:absolute; bottom:100px; left:0; right:0; text-align:center; color:white; background:rgba(0,0,0,0.6); padding:8px 12px; font-size:13px; font-weight:500; z-index:10;">
           Tolong buka kacamata atau apapun yang menutupi wajah Anda.
         </div>
@@ -1357,16 +1357,28 @@
     <!-- Profile Completion Gate Overlay (blocks dashboard until data diri + foto wajah lengkap) -->
     <div id="profile-gate-overlay" style="display:none;position:fixed;inset:0;z-index:9998;background:var(--obsidian-950);"></div>
 
-    <!-- Face Verification Modal -->
-    <div id="verify-modal" class="modal" style="display:none;">
-      <div class="modal-content">
-        <h2 style="margin-bottom:8px;">Verifikasi Wajah</h2>
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Sebelum masuk ke Dashboard Absensi, lakukan verifikasi wajah Anda terlebih dahulu.</p>
-        <div style="display:flex;justify-content:center;margin-bottom:16px;">
-          <img id="verify-photo-preview" style="display:none; width:160px; height:160px; object-fit:cover; border-radius:50%; border:2px solid var(--gold-500);" />
+    <!-- Face Scanner / Verification Modal -->
+    <div id="verify-modal" class="modal face-scanner-modal" style="display:none;">
+      <div class="modal-content face-scanner-panel">
+        <div class="face-scanner-heading">
+          <div>
+            <h2 style="margin-bottom:8px;">Verifikasi Wajah</h2>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Sebelum masuk ke Dashboard Absensi, lakukan verifikasi wajah Anda terlebih dahulu.</p>
+          </div>
+          <span id="face-camera-indicator" class="face-camera-indicator" aria-label="Kamera tidak aktif" title="Kamera tidak aktif"></span>
         </div>
-        <div id="verify-status-text" style="text-align:center;font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Siap untuk memindai wajah.</div>
-        <button id="btn-start-verify" class="btn-primary" style="width:100%;margin-top:0;">Mulai Verifikasi Wajah</button>
+        <div class="face-scanner-stage">
+          <video id="face-scanner-video" autoplay playsinline muted></video>
+          <canvas id="face-scanner-canvas" aria-hidden="true"></canvas>
+          <div class="face-scanner-corners" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div id="face-scanner-status" class="face-scanner-status" role="status" aria-live="polite">Kamera nonaktif. Tekan Mulai Scan untuk memulai.</div>
+        <div id="verify-status-text" class="face-verify-status" role="status" aria-live="polite">Siap untuk memindai wajah.</div>
+        <img id="verify-photo-preview" alt="Foto untuk verifikasi" style="display:none; width:160px; height:160px; object-fit:cover; border-radius:50%; border:2px solid var(--gold-500); margin:0 auto 16px;" />
+        <div class="face-scanner-actions">
+          <button id="btn-start-verify" class="btn-primary" style="width:100%;margin-top:0;">Mulai Scan</button>
+          <button id="btn-stop-face-scan" class="btn-secondary" type="button" style="width:100%;" disabled>Hentikan Scan</button>
+        </div>
       </div>
     </div>
 

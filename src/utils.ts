@@ -75,47 +75,64 @@ export function generateId(): string {
 }
 
 // ─── GPS Helpers ─────────────────────────────────────────────────────────────
-export function getCurrentPosition(): Promise<GpsCoordinates> {
+export function getCurrentPosition(cachedPosition?: GpsCoordinates | null): Promise<GpsCoordinates> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error('Geolocation tidak didukung oleh browser ini.'));
       return;
     }
 
-    const getPos = (highAccuracy = true): Promise<GeolocationPosition> => {
-      return new Promise((res, rej) => {
-        navigator.geolocation.getCurrentPosition(res, (err) => {
-          if (highAccuracy && (err.code === err.TIMEOUT || err.code === err.POSITION_UNAVAILABLE)) {
-            // Fallback to low accuracy
-            navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
-          } else {
-            rej(err);
-          }
-        }, { enableHighAccuracy: highAccuracy, timeout: 15000, maximumAge: 0 });
-      });
-    };
+    const isRecentUsablePosition = (position: GpsCoordinates | null | undefined, maxAgeMs: number): position is GpsCoordinates =>
+      !!position && Number.isFinite(position.latitude) && Number.isFinite(position.longitude) &&
+      position.latitude !== 0 && position.longitude !== 0 && position.accuracy <= 100 &&
+      Date.now() - position.timestamp <= maxAgeMs;
 
-    getPos(true)
-      .then((pos) => {
-        if ((pos as any).mocked) {
-          reject(new Error('Fake GPS terdeteksi. Harap matikan aplikasi Fake GPS.'));
+    // Reuse the live GPS watch fix when it is fresh and sufficiently accurate.
+    if (isRecentUsablePosition(cachedPosition, 60_000)) {
+      resolve(cachedPosition);
+      return;
+    }
+
+    const requestPosition = (options: PositionOptions): Promise<GeolocationPosition> =>
+      new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, options));
+
+    const toCoordinates = (position: GeolocationPosition): GpsCoordinates => ({
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      accuracy: position.coords.accuracy,
+      altitude: position.coords.altitude,
+      timestamp: position.timestamp,
+      isMocked: false,
+    });
+
+    requestPosition({ enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 })
+      .catch((highAccuracyError: GeolocationPositionError) => {
+        if (highAccuracyError.code === 1) throw highAccuracyError;
+        // Low accuracy can use Wi-Fi/network location and allow a longer timeout indoors.
+        return requestPosition({ enableHighAccuracy: false, timeout: 20_000, maximumAge: 120_000 });
+      })
+      .then((position) => {
+        if ((position as GeolocationPosition & { mocked?: boolean }).mocked) {
+          throw new Error('Fake GPS terdeteksi. Harap matikan aplikasi Fake GPS.');
+        }
+        resolve(toCoordinates(position));
+      })
+      .catch((error: GeolocationPositionError | Error) => {
+        if (error instanceof Error && !('code' in error)) {
+          reject(error);
           return;
         }
-        resolve({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          altitude: pos.coords.altitude,
-          timestamp: pos.timestamp,
-          isMocked: false
-        });
-      })
-      .catch((err) => {
-        let errMsg = 'Gagal mendapatkan lokasi. Pastikan GPS aktif dan diizinkan.';
-        if (err.code === 1) errMsg = 'Akses GPS ditolak. Tolong izinkan akses lokasi di browser Anda.';
-        else if (err.code === 2) errMsg = 'Posisi GPS tidak tersedia. Coba pindah ke area terbuka.';
-        else if (err.code === 3) errMsg = 'Pencarian lokasi GPS memakan waktu terlalu lama (Timeout).';
-        reject(new Error(errMsg));
+        // If fresh live location exists, fall back to it when one-shot location times out.
+        if (isRecentUsablePosition(cachedPosition, 120_000)) {
+          resolve(cachedPosition);
+          return;
+        }
+
+        let message = 'Gagal mendapatkan lokasi. Pastikan GPS aktif dan coba lagi di area terbuka.';
+        if (error.code === 1) message = 'Akses GPS ditolak. Izinkan akses lokasi pada pengaturan browser.';
+        else if (error.code === 2) message = 'Posisi GPS tidak tersedia. Aktifkan layanan lokasi atau pindah ke area terbuka.';
+        else if (error.code === 3) message = 'GPS belum mendapatkan posisi. Aktifkan layanan lokasi, izinkan akses lokasi, lalu coba lagi.';
+        reject(new Error(message));
       });
   });
 }
